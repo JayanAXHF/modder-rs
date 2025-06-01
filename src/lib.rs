@@ -1,0 +1,314 @@
+#![allow(dead_code)]
+use hmac_sha512::Hash;
+use serde::{Deserialize, Serialize};
+use serde_json::Result;
+use std::{fmt::Display, fs, io::Read};
+use tracing::info;
+use tracing::{self, error};
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct VersionData {
+    name: Option<String>,
+    version_number: Option<String>,
+    game_versions: Option<Vec<String>>,
+    changelog: Option<String>,
+    pub dependencies: Option<Vec<Dependency>>,
+    version_type: Option<String>,
+    loaders: Option<Vec<String>>,
+    featured: Option<bool>,
+    status: Option<String>,
+    id: String,
+    project_id: String,
+    author_id: String,
+    date_published: String,
+    downloads: u32,
+    changelog_url: Option<String>,
+    pub files: Option<Vec<File>>,
+}
+
+#[derive(Debug, Deserialize, Clone, Eq, PartialEq)]
+pub struct Dependency {
+    version_id: Option<String>,
+    project_id: Option<String>,
+    file_name: Option<String>,
+    dependency_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct File {
+    pub hashes: FileHash,
+    url: String,
+    pub filename: String,
+    primary: bool,
+    size: u32,
+    file_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FileHash {
+    pub sha512: String,
+    sha1: String,
+}
+pub async fn testing() {
+    let mod_name = "ferrite-core";
+    let version = "1.21";
+    let version_data = get_version(mod_name, version).await.unwrap();
+    download_file(&version_data.files.unwrap()[0]).await;
+}
+
+pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
+    let versions = reqwest::get(format!(
+        "https://api.modrinth.com/v2/project/{}/version",
+        mod_name
+    ))
+    .await
+    .unwrap();
+    let versions = versions.text().await.unwrap();
+    let versions: Result<Vec<VersionData>> = serde_json::from_str(&versions);
+    if versions.is_err() {
+        error!(
+            "Error parsing versions for mod {}: {}",
+            mod_name,
+            versions.err().unwrap()
+        );
+        return None;
+    }
+    let versions = versions.unwrap();
+
+    let v = versions.iter().find(|v| {
+        v.game_versions
+            .as_ref()
+            .unwrap()
+            .contains(&(version.to_string()))
+            && v.loaders.as_ref().unwrap().contains(&"fabric".to_string())
+    });
+
+    v.cloned()
+}
+
+pub async fn download_file(file: &File) {
+    let file_content = reqwest::get(file.url.clone()).await.unwrap();
+    fs::write(file.filename.clone(), file_content.bytes().await.unwrap()).unwrap();
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum Mods {
+    AntiXray,
+    AppleSkin,
+    CarpetExtra,
+    EasyAuth,
+    EssentialCommands,
+    FabricApi,
+    FabricCarpet,
+    Geyser,
+    Lithium,
+    Origins,
+    SkinRestorer,
+    Status,
+    WorldEdit,
+}
+
+impl Display for Mods {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Mods::FabricApi => "fabric-api".to_string(),
+            Mods::AntiXray => "anti-xray".to_string(),
+            Mods::AppleSkin => "appleskin".to_string(),
+            Mods::EasyAuth => "easy-auth".to_string(),
+            Mods::EssentialCommands => "essential-commands".to_string(),
+            Mods::Lithium => "lithium".to_string(),
+            Mods::Origins => "origins".to_string(),
+            Mods::SkinRestorer => "skin-restorer".to_string(),
+            Mods::Status => "status".to_string(),
+            Mods::CarpetExtra => "carpet-extra".to_string(),
+            Mods::FabricCarpet => "fabric-carpet".to_string(),
+            Mods::Geyser => "geyser".to_string(),
+            Mods::WorldEdit => "worldedit".to_string(),
+        };
+
+        write!(f, "{}", text)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Project {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub categories: Vec<String>,
+    pub client_side: SupportLevel,
+    pub server_side: SupportLevel,
+    pub project_type: ProjectType,
+    pub downloads: u64,
+    pub icon_url: Option<String>,
+    pub color: Option<u32>,
+    pub thread_id: Option<String>,
+    pub monetization_status: Option<MonetizationStatus>,
+    pub project_id: String,
+    pub author: String,
+    pub display_categories: Vec<String>,
+    pub versions: Vec<String>,
+    pub follows: u64,
+    pub date_created: String,
+    pub date_modified: String,
+    pub latest_version: Option<String>,
+    pub license: String,
+    pub gallery: Vec<String>,
+    pub featured_gallery: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SupportLevel {
+    Required,
+    Optional,
+    Unsupported,
+    Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectType {
+    Mod,
+    Modpack,
+    Resourcepack,
+    Shader,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MonetizationStatus {
+    Monetized,
+    Demonetized,
+    ForceDemonetized,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectSearch {
+    pub hits: Vec<Project>,
+    offset: u16,
+    limit: u16,
+    total_hits: u16,
+}
+
+pub async fn get_top_mods(limit: u16) -> Vec<Project> {
+    let mut mods = Vec::new();
+    let client = reqwest::Client::new();
+    for i in 0..(limit / 100) {
+        let res = client.get(format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", 100, i * 100)).send().await.unwrap();
+        let res = res.text().await.unwrap();
+        let res: Result<ProjectSearch> = serde_json::from_str(&res);
+        let res = res.unwrap();
+        let hits = res.hits;
+        mods.extend(hits);
+    }
+    if limit % 100 != 0 {
+        let res = client.get(
+            format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", limit % 100, (limit / 100) * 100)
+        ).send().await.unwrap();
+        let res = res.text().await.unwrap();
+        let res: Result<ProjectSearch> = serde_json::from_str(&res);
+        let res = res.unwrap();
+        let hits = res.hits;
+
+        mods.extend(hits);
+    }
+
+    mods
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct Mod {
+    pub slug: String,
+    pub title: String,
+}
+
+impl From<Project> for Mod {
+    fn from(project: Project) -> Self {
+        Mod {
+            slug: project.slug,
+            title: project.title,
+        }
+    }
+}
+
+impl Display for Mod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.title)
+    }
+}
+
+pub async fn download_dependencies(mod_: &Mod, version: &str, prev_deps: &mut Vec<Dependency>) {
+    let mod_ = get_version(&mod_.slug, version).await;
+    if let Some(mod_) = mod_ {
+        for dependency in mod_.dependencies.unwrap() {
+            if prev_deps.contains(&dependency) {
+                info!(
+                    "Skipping dependency {}",
+                    dependency.file_name.unwrap_or("Unknown".to_string())
+                );
+                continue;
+            }
+            prev_deps.push(dependency.clone());
+            let dependency = get_version(&dependency.project_id.unwrap(), version).await;
+
+            if let Some(dependency) = dependency {
+                info!(
+                    "Downloading dependency {}",
+                    dependency.clone().files.unwrap()[0].filename
+                );
+                download_file(&dependency.files.unwrap()[0]).await;
+            }
+        }
+    }
+}
+
+pub fn calc_sha512(filename: &str) -> String {
+    let mut file = fs::File::open(filename).unwrap();
+    let mut text = Vec::new();
+    file.read_to_end(&mut text).unwrap();
+    let hash = Hash::hash(text);
+    hex::encode(hash)
+}
+
+impl VersionData {
+    pub async fn from_hash(hash: String) -> Self {
+        let res = reqwest::get(format!("https://api.modrinth.com/v2/version_file/{hash}"))
+            .await
+            .unwrap();
+        let res = res.text().await.unwrap();
+        let res: Result<VersionData> = serde_json::from_str(&res);
+        if res.is_err() {
+            panic!("Error parsing version data: {}", res.err().unwrap());
+        }
+        res.unwrap()
+    }
+}
+
+pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool) {
+    let hash = calc_sha512(filename);
+    let version_data = VersionData::from_hash(hash).await;
+    let new_version_data = get_version(&version_data.project_id, new_version).await;
+
+    if new_version_data.is_none() {
+        error!("Could not find version {} for {}", new_version, filename);
+        return;
+    }
+    let new_version_data = new_version_data.unwrap();
+    download_file(&new_version_data.clone().files.unwrap()[0]).await;
+    if del_prev && filename != new_version_data.files.unwrap()[0].filename {
+        fs::remove_file(filename).unwrap();
+    }
+}
+
+pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        info!("Updating {:?}", path);
+        if path.is_file() {
+            update_from_file(path.to_str().unwrap(), new_version, del_prev).await;
+        }
+    }
+}
