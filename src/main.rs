@@ -1,6 +1,7 @@
 use clap::Parser;
+use futures::lock::Mutex;
 use modder::*;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -26,7 +27,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
-    let mut dependencies = Vec::new();
+    let dependencies = Arc::new(Mutex::new(Vec::new()));
 
     let args = Args::parse();
     let version = if let Some(version) = args.game_version {
@@ -94,12 +95,21 @@ async fn main() {
     let mods = mods.into_iter().collect::<Vec<Mod>>();
     let prompt = inquire::MultiSelect::new("Select Mods", mods);
     let mods = prompt.prompt().unwrap();
+    let mut handles = Vec::new();
     for mod_ in mods {
-        let version_data = get_version(&mod_.slug, &version).await;
-        if let Some(version_data) = version_data {
-            info!("Downloading {}", mod_.title);
-            download_file(&version_data.clone().files.unwrap()[0]).await;
-            download_dependencies(&mod_, &version, &mut dependencies).await;
-        }
+        let version = version.clone();
+        let dependencies = Arc::clone(&dependencies);
+        let handle = tokio::spawn(async move {
+            let version_data = get_version(&mod_.slug, &version).await;
+            if let Some(version_data) = version_data {
+                info!("Downloading {}", mod_.title);
+                download_file(&version_data.clone().files.unwrap()[0]).await;
+                download_dependencies(&mod_, &version, dependencies).await;
+            }
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        handle.await.unwrap();
     }
 }

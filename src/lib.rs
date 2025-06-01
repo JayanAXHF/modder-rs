@@ -1,7 +1,9 @@
 #![allow(dead_code)]
+use futures::lock::Mutex;
 use hmac_sha512::Hash;
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
+use std::sync::Arc;
 use std::{fmt::Display, fs, io::Read};
 use tracing::info;
 use tracing::{self, error};
@@ -49,12 +51,6 @@ pub struct FileHash {
     pub sha512: String,
     sha1: String,
 }
-pub async fn testing() {
-    let mod_name = "ferrite-core";
-    let version = "1.21";
-    let version_data = get_version(mod_name, version).await.unwrap();
-    download_file(&version_data.files.unwrap()[0]).await;
-}
 
 pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     let versions = reqwest::get(format!(
@@ -67,7 +63,7 @@ pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     let versions: Result<Vec<VersionData>> = serde_json::from_str(&versions);
     if versions.is_err() {
         error!(
-            "Error parsing versions for mod {}: {}",
+            "Error parsing versions for mod {}: {}. This may mean that this mod is not available for this version",
             mod_name,
             versions.err().unwrap()
         );
@@ -130,7 +126,7 @@ impl Display for Mods {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct Project {
     pub slug: String,
@@ -158,7 +154,7 @@ pub struct Project {
     pub featured_gallery: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum SupportLevel {
     Required,
@@ -167,7 +163,7 @@ pub enum SupportLevel {
     Unknown,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectType {
     Mod,
@@ -176,7 +172,7 @@ pub enum ProjectType {
     Shader,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum MonetizationStatus {
     Monetized,
@@ -195,24 +191,62 @@ pub struct ProjectSearch {
 pub async fn get_top_mods(limit: u16) -> Vec<Project> {
     let mut mods = Vec::new();
     let client = reqwest::Client::new();
+    let mut handles = Vec::new();
+    let temp_mods = Arc::new(Mutex::new(Vec::new()));
     for i in 0..(limit / 100) {
-        let res = client.get(format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", 100, i * 100)).send().await.unwrap();
-        let res = res.text().await.unwrap();
-        let res: Result<ProjectSearch> = serde_json::from_str(&res);
-        let res = res.unwrap();
-        let hits = res.hits;
-        mods.extend(hits);
-    }
-    if limit % 100 != 0 {
-        let res = client.get(
-            format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", limit % 100, (limit / 100) * 100)
-        ).send().await.unwrap();
-        let res = res.text().await.unwrap();
-        let res: Result<ProjectSearch> = serde_json::from_str(&res);
-        let res = res.unwrap();
-        let hits = res.hits;
+        let temp_mods = Arc::clone(&temp_mods.clone());
+        let handle = tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let res = client.get(format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", 100, i * 100)).send().await.unwrap();
+            let res = res.text().await.unwrap();
 
-        mods.extend(hits);
+            let res: Result<ProjectSearch> = serde_json::from_str(&res);
+            let res = res.unwrap();
+            let hits = res.hits;
+
+            let temp_mods = temp_mods.lock().await;
+            let _ = &temp_mods.clone().extend(hits);
+        });
+        handles.push(handle);
+    }
+    mods.extend(
+        Arc::clone(&temp_mods)
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<Project>>(),
+    );
+
+    let temp_mods = Arc::new(Mutex::new(Vec::new()));
+    if limit % 100 != 0 {
+        let temp_mods = Arc::clone(&temp_mods.clone());
+        handles.push        (
+
+        tokio::spawn(async move {
+            let res = client.get(
+                format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", limit % 100, (limit / 100) * 100)
+            ).send().await.unwrap();
+            let res = res.text().await.unwrap();
+            let res: Result<ProjectSearch> = serde_json::from_str(&res);
+            let res = res.unwrap();
+            let hits = res.hits;
+                let mut temp_mods = temp_mods.lock().await;
+
+            temp_mods.extend(hits);
+        })
+    );
+    }
+    mods.extend(
+        Arc::clone(&temp_mods)
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<Project>>(),
+    );
+    for handle in handles {
+        handle.await.unwrap();
     }
 
     mods
@@ -239,8 +273,13 @@ impl Display for Mod {
     }
 }
 
-pub async fn download_dependencies(mod_: &Mod, version: &str, prev_deps: &mut Vec<Dependency>) {
+pub async fn download_dependencies(
+    mod_: &Mod,
+    version: &str,
+    prev_deps: Arc<Mutex<Vec<Dependency>>>,
+) {
     let mod_ = get_version(&mod_.slug, version).await;
+    let mut prev_deps = prev_deps.lock().await;
     if let Some(mod_) = mod_ {
         for dependency in mod_.dependencies.unwrap() {
             if prev_deps.contains(&dependency) {
@@ -297,18 +336,26 @@ pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool)
     }
     let new_version_data = new_version_data.unwrap();
     download_file(&new_version_data.clone().files.unwrap()[0]).await;
-    if del_prev && filename != new_version_data.files.unwrap()[0].filename {
+    if del_prev && filename[2..] != new_version_data.files.unwrap()[0].filename {
         fs::remove_file(filename).unwrap();
     }
 }
 
 pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool) {
+    let mut handles = Vec::new();
     for entry in fs::read_dir(dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        info!("Updating {:?}", path);
-        if path.is_file() {
-            update_from_file(path.to_str().unwrap(), new_version, del_prev).await;
-        }
+        let new_version = new_version.to_string();
+        let handle = tokio::spawn(async move {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            info!("Updating {:?}", path);
+            if path.is_file() {
+                update_from_file(path.to_str().unwrap(), &new_version, del_prev).await;
+            }
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        handle.await.unwrap();
     }
 }
