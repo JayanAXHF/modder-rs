@@ -20,7 +20,7 @@ pub struct VersionData {
     featured: Option<bool>,
     status: Option<String>,
     id: String,
-    project_id: String,
+    pub project_id: String,
     author_id: String,
     date_published: String,
     downloads: u32,
@@ -82,9 +82,13 @@ pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     v.cloned()
 }
 
-pub async fn download_file(file: &File) {
+pub async fn download_file(file: &File, prefix: &str) {
     let file_content = reqwest::get(file.url.clone()).await.unwrap();
-    fs::write(file.filename.clone(), file_content.bytes().await.unwrap()).unwrap();
+    fs::write(
+        format!("{}/{}", prefix, file.filename.clone()),
+        file_content.bytes().await.unwrap(),
+    )
+    .unwrap();
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -152,6 +156,12 @@ pub struct Project {
     pub license: String,
     pub gallery: Vec<String>,
     pub featured_gallery: Option<String>,
+}
+
+impl Display for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.title)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -277,9 +287,11 @@ pub async fn download_dependencies(
     mod_: &Mod,
     version: &str,
     prev_deps: Arc<Mutex<Vec<Dependency>>>,
+    prefix: &str,
 ) {
     let mod_ = get_version(&mod_.slug, version).await;
     let mut prev_deps = prev_deps.lock().await;
+    let mut handles = Vec::new();
     if let Some(mod_) = mod_ {
         for dependency in mod_.dependencies.unwrap() {
             if prev_deps.contains(&dependency) {
@@ -297,9 +309,16 @@ pub async fn download_dependencies(
                     "Downloading dependency {}",
                     dependency.clone().files.unwrap()[0].filename
                 );
-                download_file(&dependency.files.unwrap()[0]).await;
+                let prefix = prefix.to_string();
+                let handle = tokio::spawn(async move {
+                    download_file(&dependency.files.unwrap()[0], &prefix).await;
+                });
+                handles.push(handle);
             }
         }
+    }
+    for handle in handles {
+        handle.await.unwrap();
     }
 }
 
@@ -325,7 +344,7 @@ impl VersionData {
     }
 }
 
-pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool) {
+pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool, prefix: &str) {
     let hash = calc_sha512(filename);
     let version_data = VersionData::from_hash(hash).await;
     let new_version_data = get_version(&version_data.project_id, new_version).await;
@@ -335,22 +354,25 @@ pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool)
         return;
     }
     let new_version_data = new_version_data.unwrap();
-    download_file(&new_version_data.clone().files.unwrap()[0]).await;
-    if del_prev && filename[2..] != new_version_data.files.unwrap()[0].filename {
+    download_file(&new_version_data.clone().files.unwrap()[0], prefix).await;
+    if del_prev
+        && filename.split('/').last().unwrap() != new_version_data.files.unwrap()[0].filename
+    {
         fs::remove_file(filename).unwrap();
     }
 }
 
-pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool) {
+pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool, prefix: &str) {
     let mut handles = Vec::new();
     for entry in fs::read_dir(dir).unwrap() {
         let new_version = new_version.to_string();
+        let prefix = prefix.to_string();
         let handle = tokio::spawn(async move {
             let entry = entry.unwrap();
             let path = entry.path();
             info!("Updating {:?}", path);
             if path.is_file() {
-                update_from_file(path.to_str().unwrap(), &new_version, del_prev).await;
+                update_from_file(path.to_str().unwrap(), &new_version, del_prev, &prefix).await;
             }
         });
         handles.push(handle);
