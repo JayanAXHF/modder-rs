@@ -4,9 +4,9 @@ use hmac_sha512::Hash;
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
 use std::sync::Arc;
+use std::{env, path::PathBuf};
 use std::{fmt::Display, fs, io::Read};
-use tracing::info;
-use tracing::{self, error};
+use tracing::{self, error, info};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct VersionData {
@@ -54,11 +54,12 @@ pub struct FileHash {
 
 pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     let versions = reqwest::get(format!(
-        "https://api.modrinth.com/v2/project/{}/version",
-        mod_name
+        "https://api.modrinth.com/v2/project/{}/version?game_versions=[\"{}\"]&loaders=[\"fabric\"]",
+        mod_name, version
     ))
     .await
     .unwrap();
+
     let versions = versions.text().await.unwrap();
     let versions: Result<Vec<VersionData>> = serde_json::from_str(&versions);
     if versions.is_err() {
@@ -71,15 +72,7 @@ pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     }
     let versions = versions.unwrap();
 
-    let v = versions.iter().find(|v| {
-        v.game_versions
-            .as_ref()
-            .unwrap()
-            .contains(&(version.to_string()))
-            && v.loaders.as_ref().unwrap().contains(&"fabric".to_string())
-    });
-
-    v.cloned()
+    Some(versions[0].clone())
 }
 
 pub async fn download_file(file: &File, prefix: &str) {
@@ -379,5 +372,26 @@ pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool, prefix: &s
     }
     for handle in handles {
         handle.await.unwrap();
+    }
+}
+
+pub fn get_minecraft_dir() -> PathBuf {
+    let home_dir = env::var("HOME").ok().map(PathBuf::from);
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = env::var("APPDATA").expect("%APPDATA% not set");
+        PathBuf::from(appdata).join(".minecraft")
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        home_dir
+            .expect("HOME not set")
+            .join("Library/Application Support/minecraft")
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        home_dir.expect("HOME not set").join(".minecraft")
     }
 }
