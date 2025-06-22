@@ -72,6 +72,10 @@ pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
     }
     let versions = versions.unwrap();
 
+    if versions.is_empty() {
+        error!("No versions found for mod {}", mod_name);
+        return None;
+    }
     Some(versions[0].clone())
 }
 
@@ -234,8 +238,7 @@ pub async fn get_top_mods(limit: u16) -> Vec<Project> {
             let res: Result<ProjectSearch> = serde_json::from_str(&res);
             let res = res.unwrap();
             let hits = res.hits;
-                let mut temp_mods = temp_mods.lock().await;
-
+            let mut temp_mods = temp_mods.lock().await;
             temp_mods.extend(hits);
         })
     );
