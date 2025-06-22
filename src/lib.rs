@@ -58,7 +58,7 @@ pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
         mod_name, version
     ))
     .await
-    .unwrap();
+    .expect("Failed to get versions");
 
     let versions = versions.text().await.unwrap();
     let versions: Result<Vec<VersionData>> = serde_json::from_str(&versions);
@@ -201,31 +201,24 @@ pub async fn get_top_mods(limit: u16) -> Vec<Project> {
     let mut handles = Vec::new();
     let temp_mods = Arc::new(Mutex::new(Vec::new()));
     for i in 0..(limit / 100) {
-        let temp_mods = Arc::clone(&temp_mods.clone());
+        let temp_mods = Arc::clone(&temp_mods);
         let handle = tokio::spawn(async move {
             let client = reqwest::Client::new();
-            let res = client.get(format!("https://api.modrinth.com/v2/search?limit={}&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", 100, i * 100)).send().await.unwrap();
-            let res = res.text().await.unwrap();
+            let res = client
+                        .get(format!("https://api.modrinth.com/v2/search?limit=100&index=relevance&facets=%5B%5B%22project_type%3Amod%22%5D%5D&offset={}", i * 100))
+                            .send().await.unwrap();
+            let res_text = res.text().await.unwrap();
 
-            let res: Result<ProjectSearch> = serde_json::from_str(&res);
-            let res = res.unwrap();
-            let hits = res.hits;
+            let parsed: ProjectSearch = serde_json::from_str(&res_text).unwrap();
+            let hits = parsed.hits;
 
-            let temp_mods = temp_mods.lock().await;
-            let _ = &temp_mods.clone().extend(hits);
+            let mut temp_mods_guard = temp_mods.lock().await;
+            temp_mods_guard.extend(hits);
         });
         handles.push(handle);
     }
-    mods.extend(
-        Arc::clone(&temp_mods)
-            .lock()
-            .await
-            .iter()
-            .cloned()
-            .collect::<Vec<Project>>(),
-    );
+    info!(temp_mods = ?temp_mods.lock().await.len(), "Got mods");
 
-    let temp_mods = Arc::new(Mutex::new(Vec::new()));
     if limit % 100 != 0 {
         let temp_mods = Arc::clone(&temp_mods.clone());
         handles.push        (
@@ -243,6 +236,9 @@ pub async fn get_top_mods(limit: u16) -> Vec<Project> {
         })
     );
     }
+    for handle in handles {
+        handle.await.unwrap();
+    }
     mods.extend(
         Arc::clone(&temp_mods)
             .lock()
@@ -251,10 +247,6 @@ pub async fn get_top_mods(limit: u16) -> Vec<Project> {
             .cloned()
             .collect::<Vec<Project>>(),
     );
-    for handle in handles {
-        handle.await.unwrap();
-    }
-
     mods
 }
 
