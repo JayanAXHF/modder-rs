@@ -5,6 +5,9 @@ use std::{fmt::Display, path::PathBuf};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+    /// Whether to print the output to the console. If `false`, only error messages will be printed
+    #[arg(short, long, default_value_t = false)]
+    pub silent: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -23,7 +26,7 @@ pub enum Commands {
     #[command(arg_required_else_help = true)]
     Update {
         /// The directory to update mods in
-        #[arg(required = true)]
+        #[arg( default_value_os_t = PathBuf::from("./"))]
         dir: PathBuf,
         /// The game version to add this mod for
         #[arg(short, long)]

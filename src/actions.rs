@@ -1,4 +1,7 @@
+use crate::modrinth_wrapper::modrinth::Mod;
 use modder::get_minecraft_dir;
+use modrinth_wrapper::modrinth;
+use modrinth_wrapper::modrinth::Modrinth;
 use std::collections::HashMap;
 use std::fs;
 
@@ -39,7 +42,7 @@ pub async fn run(mut cli: Cli) {
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
             };
-            let mods = get_top_mods(limit).await;
+            let mods: Vec<modrinth::Project> = Modrinth::get_top_mods(limit).await;
             let mods = mods
                 .into_iter()
                 .map(|mod_| mod_.into())
@@ -98,11 +101,12 @@ pub async fn run(mut cli: Cli) {
                 let version = version.clone();
                 let dependencies = Arc::clone(&dependencies);
                 let handle = tokio::spawn(async move {
-                    let version_data = get_version(&mod_.slug, &version).await;
+                    let version_data = Modrinth::get_version(&mod_.slug, &version).await;
                     if let Some(version_data) = version_data {
                         info!("Downloading {}", mod_.title);
-                        download_file(&version_data.clone().files.unwrap()[0], "./").await;
-                        download_dependencies(&mod_, &version, dependencies, "./").await;
+                        modrinth::download_file(&version_data.clone().files.unwrap()[0], "./")
+                            .await;
+                        Modrinth::download_dependencies(&mod_, &version, dependencies, "./").await;
                     }
                 });
                 handles.push(handle);
@@ -130,16 +134,7 @@ pub async fn run(mut cli: Cli) {
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
             };
-            let client = reqwest::Client::new();
-            let res = client
-                .get(format!("https://api.modrinth.com/v2/search?query={}", mod_))
-                .send()
-                .await
-                .unwrap();
-            let res = res.text().await.unwrap();
-
-            let res: Result<ProjectSearch> = serde_json::from_str(&res);
-            let res = res.unwrap();
+            let res = Modrinth::search_mods(&mod_, 100, 0).await;
             let hits = res.hits;
             if hits.is_empty() {
                 error!("Could not find mod {}", mod_);
@@ -147,11 +142,12 @@ pub async fn run(mut cli: Cli) {
             }
             if hits.len() == 1 {
                 let mod_ = hits[0].clone();
-                let version_data = get_version(&mod_.slug, &version).await;
+                let version_data = Modrinth::get_version(&mod_.slug, &version).await;
                 if let Some(version_data) = version_data {
                     info!("Downloading {}", mod_.title);
-                    download_file(&version_data.clone().files.unwrap()[0], "./").await;
-                    download_dependencies(&mod_.into(), &version, dependencies, "./").await;
+                    modrinth::download_file(&version_data.clone().files.unwrap()[0], "./").await;
+                    Modrinth::download_dependencies(&mod_.into(), &version, dependencies, "./")
+                        .await;
                 } else {
                     error!("Could not find version {} for {}", version, mod_.title);
                     process::exit(1);
@@ -165,11 +161,13 @@ pub async fn run(mut cli: Cli) {
                 let version = version.clone();
                 let dependencies = Arc::clone(&dependencies);
                 let handle = tokio::spawn(async move {
-                    let version_data = get_version(&hit.slug, &version).await;
+                    let version_data = Modrinth::get_version(&hit.slug, &version).await;
                     if let Some(version_data) = version_data {
                         info!("Downloading {}", hit.title);
-                        download_file(&version_data.clone().files.unwrap()[0], "./").await;
-                        download_dependencies(&hit.into(), &version, dependencies, "./").await;
+                        modrinth::download_file(&version_data.clone().files.unwrap()[0], "./")
+                            .await;
+                        Modrinth::download_dependencies(&hit.into(), &version, dependencies, "./")
+                            .await;
                     } else {
                         error!("Could not find version {} for {}", version, hit.title);
                         process::exit(1);
