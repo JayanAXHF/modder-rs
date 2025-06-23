@@ -31,7 +31,7 @@ pub async fn run(mut cli: Cli) {
             },
         ];
         let options = options.into_iter().collect::<Vec<Commands>>();
-        let prompt = inquire::Select::new("Select Option", options).with_vim_mode(true);
+        let prompt = inquire::Select::new("Select Option", options);
         let option = prompt.prompt().unwrap();
         cli.command = option;
     }
@@ -94,7 +94,7 @@ pub async fn run(mut cli: Cli) {
                 .chain(extras.into_iter())
                 .collect::<HashSet<Mod>>();
             let mods = mods.into_iter().collect::<Vec<Mod>>();
-            let prompt = inquire::MultiSelect::new("Select Mods", mods).with_vim_mode(true);
+            let prompt = inquire::MultiSelect::new("Select Mods", mods);
             let mods = prompt.prompt().unwrap();
             let mut handles = Vec::new();
             for mod_ in mods {
@@ -154,7 +154,7 @@ pub async fn run(mut cli: Cli) {
                 }
                 return;
             }
-            let prompt = inquire::MultiSelect::new("Select Mods", hits).with_vim_mode(true);
+            let prompt = inquire::MultiSelect::new("Select Mods", hits);
             let hits = prompt.prompt().unwrap();
             let mut handles = Vec::new();
             for hit in hits {
@@ -212,9 +212,8 @@ pub async fn run(mut cli: Cli) {
                 })
                 .collect::<Vec<usize>>();
 
-            let prompt = inquire::MultiSelect::new("Select Mods", filenames)
-                .with_default(&defaults)
-                .with_vim_mode(true);
+            let prompt =
+                inquire::MultiSelect::new("Select Mods", filenames).with_default(&defaults);
             let filenames = prompt.prompt().unwrap();
             for filename in toggle_map.iter() {
                 let name = &filename.0.split('/').last().unwrap_or("");
