@@ -1,11 +1,14 @@
 #![allow(dead_code)]
-use crate::calc_sha512;
+use crate::{Link, calc_sha512};
+use colored::Colorize;
 use futures::lock::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Result;
 use std::sync::Arc;
 use std::{fmt::Display, fs};
-use tracing::{self, error, info};
+use tracing::{self, debug, error, info};
+
+const GRAY: (u8, u8, u8) = (128, 128, 128);
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct VersionData {
@@ -49,6 +52,104 @@ pub struct File {
 pub struct FileHash {
     pub sha512: String,
     sha1: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetProject {
+    id: String,
+    slug: String,
+    project_type: String,
+    team: String,
+    title: String,
+    description: String,
+    categories: Vec<String>,
+    additional_categories: Vec<String>,
+    client_side: String,
+    server_side: String,
+    body: String,
+    status: String,
+    requested_status: Option<String>,
+    issues_url: Option<String>,
+    source_url: Option<String>,
+    wiki_url: Option<String>,
+    discord_url: Option<String>,
+    donation_urls: Vec<DonationLink>,
+    icon_url: Option<String>,
+    color: Option<u32>,
+    thread_id: String,
+    monetization_status: Option<String>,
+    body_url: Option<String>,
+    moderator_message: Option<ModeratorMessage>,
+    published: String,
+    updated: String,
+    approved: Option<String>,
+    queued: Option<String>,
+    downloads: u32,
+    followers: u32,
+    license: License,
+    versions: Vec<String>,
+    game_versions: Vec<String>,
+    loaders: Vec<String>,
+    gallery: Vec<GalleryImage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModeratorMessage {
+    message: String,
+    body: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct License {
+    id: String,
+    name: String,
+    url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DonationLink {
+    id: String,
+    platform: String,
+    url: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GalleryImage {
+    url: String,
+    featured: bool,
+    title: Option<String>,
+    description: Option<String>,
+    created: String,
+    ordering: Option<i32>,
+}
+
+impl GetProject {
+    pub async fn from_id(id: &str) -> Option<Self> {
+        let res = reqwest::get(format!("https://api.modrinth.com/v2/project/{}", id)).await;
+        if res.is_err() {
+            error!("Error getting project: {}", res.err().unwrap());
+            return None;
+        }
+        let res = res.unwrap();
+        let text = res.text().await.unwrap();
+        debug!(text);
+        let res: Result<GetProject> = serde_json::from_str(&text);
+        if res.is_err() {
+            error!("Error parsing project: {}", res.err().unwrap());
+            return None;
+        }
+        Some(res.unwrap())
+    }
+    pub fn get_title(&self) -> String {
+        self.title.clone()
+    }
+    pub fn get_categories(&self) -> Vec<String> {
+        self.categories.clone()
+    }
 }
 
 pub struct Modrinth;
@@ -269,6 +370,7 @@ impl Display for Mod {
 
 impl VersionData {
     pub async fn from_hash(hash: String) -> Self {
+        // TODO: Add this to the API
         let res = reqwest::get(format!("https://api.modrinth.com/v2/version_file/{hash}"))
             .await
             .unwrap();
@@ -278,6 +380,66 @@ impl VersionData {
             panic!("Error parsing version data: {}", res.err().unwrap());
         }
         res.unwrap()
+    }
+    pub fn format_verbose(&self, mod_name: &str, categories: &Vec<String>) -> String {
+        let mut output = String::new();
+        let url = format!("https://modrinth.com/mod/{}", self.project_id);
+        let link = Link::new(url.clone(), url);
+        output.push_str(&format!(
+            "    {} {}\n",
+            mod_name.bold(),
+            self.version_number
+                .clone()
+                .unwrap()
+                .truecolor(GRAY.0, GRAY.1, GRAY.2)
+        ));
+        output.push_str(&format!("\tURL: {}\n", link.to_string().blue(),));
+        output.push_str(&format!("\tMod version: {}\n", self.name.clone().unwrap()));
+        output.push_str(&format!(
+            "\tGame versions: {}\n",
+            self.game_versions.clone().unwrap().join(", ").green()
+        ));
+        output.push_str(&format!(
+            "\tLoaders: {}\n",
+            self.loaders.clone().unwrap().join(", ").cyan()
+        ));
+        output.push_str(&format!(
+            "\tCategories: {}\n",
+            categories.join(", ").yellow()
+        ));
+        output.push_str(&format!("\tStatus: {}\n", self.status.clone().unwrap()));
+        output.push_str(&format!(
+            "\tDate published: {}\n",
+            self.date_published.clone()
+        ));
+        output.push_str(&format!("\tDownloads: {}\n\n", self.downloads.clone()));
+
+        output
+    }
+    pub fn format(&self, mod_name: &str) -> String {
+        let mut output = String::new();
+        let url = format!("https://modrinth.com/mod/{}", self.project_id);
+        let link = Link::new(mod_name.to_string(), url);
+        let version_type = match self
+            .version_type
+            .clone()
+            .unwrap_or_default()
+            .to_uppercase()
+            .as_str()
+        {
+            "RELEASE" => "RELEASE".green(),
+            "BETA" => "BETA".yellow(),
+            "ALPHA" => "ALPHA".red(),
+            _ => "UNKNOWN".cyan(),
+        };
+        output.push_str(&format!(
+            "{}\t{}\t{}\n",
+            version_type,
+            self.project_id.truecolor(GRAY.0, GRAY.1, GRAY.2),
+            link.to_string().bold()
+        ));
+
+        output
     }
 }
 

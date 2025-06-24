@@ -3,6 +3,7 @@ mod modrinth_wrapper;
 use hmac_sha512::Hash;
 use modrinth_wrapper::modrinth;
 use serde::Deserialize;
+use std::fmt;
 use std::{env, path::PathBuf};
 use std::{fmt::Display, fs, io::Read};
 use tracing::{self, info};
@@ -93,5 +94,27 @@ pub fn get_minecraft_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         home_dir.expect("HOME not set").join(".minecraft")
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Link {
+    pub text: String,
+    pub url: String,
+}
+
+impl Link {
+    pub fn new(text: String, url: String) -> Self {
+        Self { text, url }
+    }
+}
+
+impl fmt::Display for Link {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\",
+            self.url, self.text
+        )
     }
 }

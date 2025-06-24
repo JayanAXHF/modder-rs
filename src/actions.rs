@@ -1,9 +1,11 @@
 use crate::modrinth_wrapper::modrinth::Mod;
 use modder::get_minecraft_dir;
-use modrinth_wrapper::modrinth;
-use modrinth_wrapper::modrinth::Modrinth;
+use modrinth_wrapper::modrinth::{self, VersionData};
+use modrinth_wrapper::modrinth::{GetProject, Modrinth};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
+use tabwriter::TabWriter;
 
 use crate::*;
 
@@ -235,6 +237,52 @@ pub async fn run(mut cli: Cli) {
             limit: _,
         } => {
             unreachable!()
+        }
+        Commands::List { dir, verbose } => {
+            let files = fs::read_dir(dir).unwrap();
+
+            let mut output = String::new();
+            let mut handles = Vec::new();
+            for f in files {
+                let handle = tokio::spawn(async move {
+                    if f.is_err() {
+                        return None;
+                    }
+                    let f = f.unwrap();
+                    let path = f.path();
+                    let extension = path
+                        .extension()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap_or_default();
+
+                    if extension != "jar" && extension != "disabled" {
+                        return None;
+                    }
+
+                    let path_str = path.to_str().unwrap_or_default().to_string();
+                    let hash = calc_sha512(&path_str);
+                    let version_data = VersionData::from_hash(hash).await;
+                    let project = GetProject::from_id(&version_data.project_id).await?;
+                    let out = if verbose {
+                        version_data.format_verbose(&project.get_title(), &project.get_categories())
+                    } else {
+                        version_data.format(&project.get_title())
+                    };
+                    Some(out)
+                });
+                handles.push(handle);
+            }
+            for handle in handles {
+                let out = handle.await.unwrap();
+                output.push_str(&out.unwrap_or_default());
+            }
+
+            let mut tw = TabWriter::new(vec![]);
+            tw.write_all(output.as_bytes()).unwrap();
+            tw.flush().unwrap();
+            let written = String::from_utf8(tw.into_inner().unwrap()).unwrap();
+            println!("{}", written);
         }
     }
 }

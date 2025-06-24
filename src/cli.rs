@@ -60,6 +60,14 @@ pub enum Commands {
         #[arg(short, long, default_value_os_t = PathBuf::from("./"))]
         dir: PathBuf,
     },
+    /// List all the mods in the supplied directory (defaults to current directory)
+    List {
+        /// The directory to list mods in
+        #[arg(default_value_os_t = PathBuf::from("./"))]
+        dir: PathBuf,
+        #[arg(short, long, default_value_t = false)]
+        verbose: bool,
+    },
 }
 
 impl Display for Commands {
@@ -70,6 +78,7 @@ impl Display for Commands {
             Commands::Add { .. } => "Add".to_string(),
             Commands::InPlace { .. } => "Edit Minecraft Directory".to_string(),
             Commands::Toggle { .. } => "Toggle".to_string(),
+            Commands::List { .. } => "List".to_string(),
         };
         write!(f, "{}", text)
     }
