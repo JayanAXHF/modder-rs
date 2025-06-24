@@ -12,23 +12,23 @@ use crate::*;
 pub async fn run(mut cli: Cli) {
     let dependencies = Arc::new(Mutex::new(Vec::new()));
     let default_minecraft_dir: std::path::PathBuf = get_minecraft_dir();
-    if let Commands::InPlace { mod_version, limit } = &cli.command {
+    if let Commands::InPlace { version, limit } = &cli.command {
         let options = vec![
             Commands::QuickAdd {
-                mod_version: mod_version.clone(),
+                version: version.clone(),
                 limit: *limit,
             },
             Commands::Update {
                 dir: default_minecraft_dir.clone(),
-                mod_version: mod_version.clone(),
+                version: version.clone(),
                 delete_previous: false,
             },
             Commands::Add {
                 mod_: String::new(),
-                mod_version: mod_version.clone(),
+                version: version.clone(),
             },
             Commands::Toggle {
-                mod_version: mod_version.clone(),
+                version: version.clone(),
                 dir: default_minecraft_dir,
             },
         ];
@@ -38,8 +38,8 @@ pub async fn run(mut cli: Cli) {
         cli.command = option;
     }
     match cli.command {
-        Commands::QuickAdd { mod_version, limit } => {
-            let version = if let Some(version) = mod_version {
+        Commands::QuickAdd { version, limit } => {
+            let version = if let Some(version) = version {
                 version
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
@@ -119,10 +119,10 @@ pub async fn run(mut cli: Cli) {
         }
         Commands::Update {
             dir,
-            mod_version,
+            version,
             delete_previous,
         } => {
-            let version = if let Some(version) = mod_version {
+            let version = if let Some(version) = version {
                 version
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
@@ -130,8 +130,8 @@ pub async fn run(mut cli: Cli) {
             let update_dir = dir.into_os_string().into_string().unwrap();
             modder::update_dir(&update_dir, &version, delete_previous, &update_dir).await;
         }
-        Commands::Add { mod_, mod_version } => {
-            let version = if let Some(version) = mod_version {
+        Commands::Add { mod_, version } => {
+            let version = if let Some(version) = version {
                 version
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
@@ -181,10 +181,7 @@ pub async fn run(mut cli: Cli) {
                 handle.await.unwrap();
             }
         }
-        Commands::Toggle {
-            mod_version: _,
-            dir,
-        } => {
+        Commands::Toggle { version: _, dir } => {
             let files = fs::read_dir(dir.clone()).unwrap();
             let toggle_map = files.map(|f| {
                 let f = f.unwrap();
@@ -233,7 +230,7 @@ pub async fn run(mut cli: Cli) {
             }
         }
         Commands::InPlace {
-            mod_version: _,
+            version: _,
             limit: _,
         } => {
             unreachable!()

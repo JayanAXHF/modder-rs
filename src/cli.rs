@@ -20,7 +20,7 @@ pub enum Commands {
         mod_: String,
         #[arg(short, long)]
         /// The game version to add this mod for
-        mod_version: Option<String>,
+        version: Option<String>,
     },
     /// Bulk-update a directory of mods to the specified version
     #[command(arg_required_else_help = true)]
@@ -30,7 +30,7 @@ pub enum Commands {
         dir: PathBuf,
         /// The game version to add this mod for
         #[arg(short, long)]
-        mod_version: Option<String>,
+        version: Option<String>,
         #[arg(short, long)]
         delete_previous: bool,
     },
@@ -38,7 +38,7 @@ pub enum Commands {
     QuickAdd {
         /// The game version to add this mod for
         #[arg(short, long)]
-        mod_version: Option<String>,
+        version: Option<String>,
         #[arg(short, long, default_value_t = 100)]
         limit: u16,
     },
@@ -46,7 +46,7 @@ pub enum Commands {
     InPlace {
         /// The game version to add this mod for
         #[arg(short, long)]
-        mod_version: Option<String>,
+        version: Option<String>,
         /// Passed down to the quick add command
         #[arg(short, long, default_value_t = 100)]
         limit: u16,
@@ -55,7 +55,7 @@ pub enum Commands {
     Toggle {
         /// The game version to add this mod for
         #[arg(short, long)]
-        mod_version: Option<String>,
+        version: Option<String>,
         /// The directory to toggle mods in
         #[arg(short, long, default_value_os_t = PathBuf::from("./"))]
         dir: PathBuf,
@@ -65,6 +65,7 @@ pub enum Commands {
         /// The directory to list mods in
         #[arg(default_value_os_t = PathBuf::from("./"))]
         dir: PathBuf,
+        /// Whether to print verbose imformation
         #[arg(short, long, default_value_t = false)]
         verbose: bool,
     },
