@@ -389,7 +389,7 @@ impl VersionData {
         let url = format!("https://modrinth.com/mod/{}", self.project_id);
         let link = Link::new(url.clone(), url);
         output.push_str(&format!(
-            "    {} {}\n",
+            "{} {}\n",
             mod_name.bold(),
             self.version_number
                 .clone()
@@ -446,10 +446,16 @@ impl VersionData {
     }
 }
 
-pub async fn update_from_file(filename: &str, new_version: &str, del_prev: bool, prefix: &str) {
+pub async fn update_from_file(
+    github: &mut GHReleasesAPI,
+    filename: &str,
+    new_version: &str,
+    del_prev: bool,
+    prefix: &str,
+) {
     let hash = calc_sha512(filename);
     let version_data = VersionData::from_hash(hash).await;
-    let github = GHReleasesAPI::new();
+
     if version_data.is_err() {
         let metadata = Metadata::get_all_metadata(PathBuf::from(filename));
         if metadata.is_err() {

@@ -1,6 +1,18 @@
 use clap::{Parser, Subcommand};
 use std::{fmt::Display, path::PathBuf};
 
+/// Modder is a tool for managing mods for Minecraft.
+/// It can add mods from Modrinth and Github.
+/// Other features include bulk-updating a directory of mods to a specified version
+/// and listing information about the mods in a directory.
+/// The `toggle` feature allows you to enable or disable
+/// mods in a directory without having to remove them.
+///
+/// Modder is still in development and may have bugs.
+/// Please report any issues on the GitHub repository.
+///
+///
+/// Developed by JayanAXHF
 #[derive(Debug, Parser)]
 pub struct Cli {
     #[command(subcommand)]
@@ -24,6 +36,9 @@ pub enum Commands {
         /// Where to download the mod from
         #[arg(short, long)]
         source: Option<Source>,
+        /// Github token for any mods nested in a github repo.
+        #[arg(short, long)]
+        token: Option<String>,
     },
     /// Bulk-update a directory of mods to the specified version
     #[command(arg_required_else_help = true)]
@@ -36,12 +51,16 @@ pub enum Commands {
         version: Option<String>,
         #[arg(short, long)]
         delete_previous: bool,
+        /// Github token for any mods nested in a github repo.
+        #[arg(short, long)]
+        token: Option<String>,
     },
     /// Quickly add mods from a curated list to the supplied directory (defaults to current directory)
     QuickAdd {
         /// The game version to add this mod for
         #[arg(short, long)]
         version: Option<String>,
+        /// Find top `limit` mods from Modrinth
         #[arg(short, long, default_value_t = 100)]
         limit: u16,
     },

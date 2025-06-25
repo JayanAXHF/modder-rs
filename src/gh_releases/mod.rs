@@ -4,7 +4,7 @@ mod structs;
 
 const GH_RELEASES_API: &str = "https://api.github.com/repos";
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct GHReleasesAPI {
     pub client: reqwest::Client,
     pub token: Option<Box<str>>,

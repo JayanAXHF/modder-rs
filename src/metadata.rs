@@ -6,7 +6,6 @@ use std::{
     io::{Cursor, Read, Write},
     path::PathBuf,
 };
-use tracing::info;
 use zip::{ZipWriter, write::FileOptions};
 
 use crate::cli::Source;

@@ -1,5 +1,6 @@
 use crate::modrinth_wrapper::modrinth::Mod;
 use cli::Source;
+use colored::Colorize;
 use gh_releases::GHReleasesAPI;
 use itertools::Itertools;
 use metadata::Metadata;
@@ -9,10 +10,10 @@ use modrinth_wrapper::modrinth::{GetProject, Modrinth};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use tabwriter::TabWriter;
 
 use crate::*;
+const GRAY: (u8, u8, u8) = (128, 128, 128);
 
 pub async fn run(mut cli: Cli) {
     let dependencies = Arc::new(Mutex::new(Vec::new()));
@@ -27,11 +28,13 @@ pub async fn run(mut cli: Cli) {
                 dir: default_minecraft_dir.clone(),
                 version: version.clone(),
                 delete_previous: false,
+                token: None,
             },
             Commands::Add {
                 mod_: String::new(),
                 version: version.clone(),
                 source: None,
+                token: None,
             },
             Commands::Toggle {
                 version: version.clone(),
@@ -127,6 +130,7 @@ pub async fn run(mut cli: Cli) {
             dir,
             version,
             delete_previous,
+            token,
         } => {
             let version = if let Some(version) = version {
                 version
@@ -134,12 +138,24 @@ pub async fn run(mut cli: Cli) {
                 inquire::Text::new("Version").prompt().unwrap()
             };
             let update_dir = dir.into_os_string().into_string().unwrap();
-            modder::update_dir(&update_dir, &version, delete_previous, &update_dir).await;
+            let mut github = GHReleasesAPI::new();
+            if let Some(token) = token {
+                github.token(token);
+            }
+            modder::update_dir(
+                &mut github,
+                &update_dir,
+                &version,
+                delete_previous,
+                &update_dir,
+            )
+            .await;
         }
         Commands::Add {
             mod_,
             version,
             source,
+            token,
         } => {
             let version = if let Some(version) = version {
                 version
@@ -158,7 +174,10 @@ pub async fn run(mut cli: Cli) {
             };
             if source == Source::Github {
                 let mod_ = mod_.split('/').collect_vec();
-                let gh = GHReleasesAPI::new();
+                let mut gh = GHReleasesAPI::new();
+                if let Some(token) = token {
+                    gh.token(token);
+                }
                 let releases = gh.get_releases(mod_[0], mod_[1]).await.unwrap();
                 //  TODO: Add support for other loaders
                 let release =
@@ -300,7 +319,42 @@ pub async fn run(mut cli: Cli) {
 
                     let path_str = path.to_str().unwrap_or_default().to_string();
                     let hash = calc_sha512(&path_str);
-                    let version_data = VersionData::from_hash(hash).await.unwrap();
+                    let version_data = VersionData::from_hash(hash).await;
+                    if version_data.is_err() {
+                        println!("   ");
+                        let metadata = Metadata::get_all_metadata(path_str.clone().into());
+                        if metadata.is_err() {
+                            return None;
+                        }
+                        let metadata = metadata.unwrap();
+                        let source = metadata.get("source").unwrap();
+                        if source.is_empty() {
+                            return None;
+                        }
+                        let repo = metadata.get("repo").unwrap();
+                        let repo_name = repo.split('/').last().unwrap();
+                        let link = Link::new(
+                            repo_name.to_string(),
+                            format!("https://github.com/{}", repo),
+                        );
+                        let out = if verbose {
+                            format!(
+                                "{}  {}  {}",
+                                "GITHUB".yellow(),
+                                repo.truecolor(GRAY.0, GRAY.1, GRAY.2),
+                                link.to_string().bold()
+                            )
+                        } else {
+                            format!(
+                                "{}\t{}\t{}",
+                                "GITHUB".yellow(),
+                                repo.truecolor(GRAY.0, GRAY.1, GRAY.2),
+                                link.to_string().bold()
+                            )
+                        };
+                        return Some(out);
+                    }
+                    let version_data = version_data.unwrap();
                     let project = GetProject::from_id(&version_data.project_id).await?;
                     let out = if verbose {
                         version_data.format_verbose(&project.get_title(), &project.get_categories())
@@ -312,7 +366,10 @@ pub async fn run(mut cli: Cli) {
                 handles.push(handle);
             }
             for handle in handles {
-                let out = handle.await.unwrap();
+                let out = match handle.await {
+                    Ok(out) => out,
+                    Err(_) => continue,
+                };
                 output.push_str(&out.unwrap_or_default());
             }
 

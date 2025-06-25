@@ -112,7 +112,7 @@ impl ReleaseAsset {
         let file_content = reqwest::get(url.clone()).await.unwrap();
         fs::write(&path, file_content.bytes().await.unwrap())?;
         let handle = tokio::spawn(async move {
-            /// Adds metadata to the file for later use with `update` option
+            // Adds metadata to the file for later use with `update` option
             Metadata::add_metadata(path.clone(), Source::Github, "repo", &repo).unwrap();
         });
         handle.await.unwrap();

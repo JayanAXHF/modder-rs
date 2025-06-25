@@ -3,6 +3,7 @@ pub mod cli;
 pub mod gh_releases;
 pub mod metadata;
 mod modrinth_wrapper;
+use gh_releases::GHReleasesAPI;
 use hmac_sha512::Hash;
 use modrinth_wrapper::modrinth;
 use serde::Deserialize;
@@ -59,18 +60,31 @@ pub fn calc_sha512(filename: &str) -> String {
     hex::encode(hash)
 }
 
-pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool, prefix: &str) {
+pub async fn update_dir(
+    github: &mut GHReleasesAPI,
+    dir: &str,
+    new_version: &str,
+    del_prev: bool,
+    prefix: &str,
+) {
     let mut handles = Vec::new();
     for entry in fs::read_dir(dir).unwrap() {
         let new_version = new_version.to_string();
         let prefix = prefix.to_string();
+        let mut github = github.clone();
         let handle = tokio::spawn(async move {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.is_file() && path.extension().unwrap_or(OsStr::new("")) == "jar" {
                 info!("Updating {:?}", path);
-                modrinth::update_from_file(path.to_str().unwrap(), &new_version, del_prev, &prefix)
-                    .await;
+                modrinth::update_from_file(
+                    &mut github,
+                    path.to_str().unwrap(),
+                    &new_version,
+                    del_prev,
+                    &prefix,
+                )
+                .await;
             }
         });
         handles.push(handle);
