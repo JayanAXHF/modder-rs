@@ -34,7 +34,7 @@ impl Metadata {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
         let mut zip = zip::ZipArchive::new(Cursor::new(buffer))?;
-        let metadata = format!("source: {}\n{}: {}", source.to_string(), key, value);
+        let metadata = format!("source: {}\n{}: {}", source, key, value);
         let tmp_file_path = temp_dir().join("temp.jar");
         let mut tmp_file = File::create(tmp_file_path.clone())?;
         let mut zipwriter = ZipWriter::new(&mut tmp_file);

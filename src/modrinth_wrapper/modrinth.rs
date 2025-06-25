@@ -143,7 +143,7 @@ impl GetProject {
         let res = res.unwrap();
         let text = res.text().await.unwrap();
         debug!(text);
-        let res: Result<GetProject> = serde_json::from_str(&text).map_err(|e| Error::SerdeErr(e));
+        let res: Result<GetProject> = serde_json::from_str(&text).map_err(Error::SerdeErr);
         if res.is_err() {
             error!("Error parsing project: {}", res.err().unwrap());
             return None;
@@ -174,7 +174,7 @@ impl Modrinth {
     .expect("Failed to get versions");
 
         let versions = versions.text().await.unwrap();
-        serde_json::from_str(&versions).map_err(|e| Error::SerdeErr(e))
+        serde_json::from_str(&versions).map_err(Error::SerdeErr)
     }
     pub async fn search_mods(query: &str, limit: u16, offset: u16) -> ProjectSearch {
         let client = reqwest::Client::new();
@@ -381,10 +381,10 @@ impl VersionData {
             .await
             .unwrap();
         let res = res.text().await.unwrap();
-        let res: Result<VersionData> = serde_json::from_str(&res).map_err(|e| Error::SerdeErr(e));
+        let res: Result<VersionData> = serde_json::from_str(&res).map_err(Error::SerdeErr);
         res
     }
-    pub fn format_verbose(&self, mod_name: &str, categories: &Vec<String>) -> String {
+    pub fn format_verbose(&self, mod_name: &str, categories: &[String]) -> String {
         let mut output = String::new();
         let url = format!("https://modrinth.com/mod/{}", self.project_id);
         let link = Link::new(url.clone(), url);

@@ -113,12 +113,13 @@ pub enum Source {
     Github,
 }
 
-impl ToString for Source {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
             Source::Modrinth => "modrinth".to_string(),
             Source::Github => "github".to_string(),
-        }
+        };
+        write!(f, "{}", text)
     }
 }
 
