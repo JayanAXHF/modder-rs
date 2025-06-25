@@ -4,17 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { version = "0.4.41", features = ["serde"] }
 clap = { version = "4.5.39", features = ["derive"] }
 colored = "3.0.0"
 futures = "0.3.31"
 hex = "0.4.3"
 hmac-sha512 = "1.1.7"
 inquire = "0.7.5"
+itertools = "0.14.0"
 rayon = "1.10.0"
 reqwest = "0.12.18"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tabwriter = "1.4.1"
+thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["full", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+url = { version = "2.5.4", features = ["serde"] }
+zip = "4.2.0"

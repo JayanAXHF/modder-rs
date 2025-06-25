@@ -1,10 +1,15 @@
 use crate::modrinth_wrapper::modrinth::Mod;
+use cli::Source;
+use gh_releases::GHReleasesAPI;
+use itertools::Itertools;
+use metadata::Metadata;
 use modder::get_minecraft_dir;
 use modrinth_wrapper::modrinth::{self, VersionData};
 use modrinth_wrapper::modrinth::{GetProject, Modrinth};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use tabwriter::TabWriter;
 
 use crate::*;
@@ -26,6 +31,7 @@ pub async fn run(mut cli: Cli) {
             Commands::Add {
                 mod_: String::new(),
                 version: version.clone(),
+                source: None,
             },
             Commands::Toggle {
                 version: version.clone(),
@@ -130,12 +136,47 @@ pub async fn run(mut cli: Cli) {
             let update_dir = dir.into_os_string().into_string().unwrap();
             modder::update_dir(&update_dir, &version, delete_previous, &update_dir).await;
         }
-        Commands::Add { mod_, version } => {
+        Commands::Add {
+            mod_,
+            version,
+            source,
+        } => {
             let version = if let Some(version) = version {
                 version
             } else {
                 inquire::Text::new("Version").prompt().unwrap()
             };
+            let source = match source {
+                Some(source) => source,
+                None => {
+                    if mod_.contains('/') {
+                        Source::Github
+                    } else {
+                        Source::Modrinth
+                    }
+                }
+            };
+            if source == Source::Github {
+                let mod_ = mod_.split('/').collect_vec();
+                let gh = GHReleasesAPI::new();
+                let releases = gh.get_releases(mod_[0], mod_[1]).await.unwrap();
+                //  TODO: Add support for other loaders
+                let release =
+                    gh_releases::get_mod_from_release(&releases, "fabric", &version).await;
+                if let Ok(release) = release {
+                    let url = release.get_download_url().unwrap();
+                    let file_name = url.path_segments().unwrap().last().unwrap();
+                    let path = format!("./{}", file_name);
+                    info!("Downloading {}", file_name);
+                    release
+                        .download(path.clone().into(), mod_.join("/"))
+                        .await
+                        .unwrap();
+                } else {
+                    error!(err=?release.err().unwrap().to_string(), "Error finding or downloading mod");
+                }
+                return;
+            }
             let res = Modrinth::search_mods(&mod_, 100, 0).await;
             let hits = res.hits;
             if hits.is_empty() {
@@ -259,7 +300,7 @@ pub async fn run(mut cli: Cli) {
 
                     let path_str = path.to_str().unwrap_or_default().to_string();
                     let hash = calc_sha512(&path_str);
-                    let version_data = VersionData::from_hash(hash).await;
+                    let version_data = VersionData::from_hash(hash).await.unwrap();
                     let project = GetProject::from_id(&version_data.project_id).await?;
                     let out = if verbose {
                         version_data.format_verbose(&project.get_title(), &project.get_categories())

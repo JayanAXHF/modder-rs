@@ -18,9 +18,12 @@ pub enum Commands {
         /// The mod name
         #[arg(required = true)]
         mod_: String,
-        #[arg(short, long)]
         /// The game version to add this mod for
+        #[arg(short, long)]
         version: Option<String>,
+        /// Where to download the mod from
+        #[arg(short, long)]
+        source: Option<Source>,
     },
     /// Bulk-update a directory of mods to the specified version
     #[command(arg_required_else_help = true)]
@@ -82,5 +85,31 @@ impl Display for Commands {
             Commands::List { .. } => "List".to_string(),
         };
         write!(f, "{}", text)
+    }
+}
+
+#[derive(Debug, Clone, clap::ValueEnum, PartialEq)]
+pub enum Source {
+    Modrinth,
+    Github,
+}
+
+impl ToString for Source {
+    fn to_string(&self) -> String {
+        match self {
+            Source::Modrinth => "modrinth".to_string(),
+            Source::Github => "github".to_string(),
+        }
+    }
+}
+
+impl TryInto<Source> for &str {
+    type Error = String;
+    fn try_into(self) -> Result<Source, Self::Error> {
+        match self.trim().to_lowercase().as_str() {
+            "modrinth" => Ok(Source::Modrinth),
+            "github" => Ok(Source::Github),
+            _ => Err("Invalid source".to_string()),
+        }
     }
 }

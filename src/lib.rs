@@ -1,8 +1,12 @@
 #![allow(dead_code)]
+pub mod cli;
+pub mod gh_releases;
+pub mod metadata;
 mod modrinth_wrapper;
 use hmac_sha512::Hash;
 use modrinth_wrapper::modrinth;
 use serde::Deserialize;
+use std::ffi::OsStr;
 use std::fmt;
 use std::{env, path::PathBuf};
 use std::{fmt::Display, fs, io::Read};
@@ -63,8 +67,8 @@ pub async fn update_dir(dir: &str, new_version: &str, del_prev: bool, prefix: &s
         let handle = tokio::spawn(async move {
             let entry = entry.unwrap();
             let path = entry.path();
-            info!("Updating {:?}", path);
-            if path.is_file() {
+            if path.is_file() && path.extension().unwrap_or(OsStr::new("")) == "jar" {
+                info!("Updating {:?}", path);
                 modrinth::update_from_file(path.to_str().unwrap(), &new_version, del_prev, &prefix)
                     .await;
             }
@@ -116,5 +120,46 @@ impl fmt::Display for Link {
             "\u{1b}]8;;{}\u{1b}\\{}\u{1b}]8;;\u{1b}\\",
             self.url, self.text
         )
+    }
+}
+
+pub struct UrlBuilder {
+    pub base: String,
+    pub path: String,
+    pub params: Vec<(String, String)>,
+}
+impl UrlBuilder {
+    pub fn new(base: &str, path: &str) -> Self {
+        Self {
+            base: base.to_string(),
+            path: path.to_string(),
+            params: Vec::new(),
+        }
+    }
+    fn add_param(&mut self, key: &str, value: &str) {
+        self.params.push((key.to_string(), value.to_string()));
+    }
+}
+
+impl fmt::Display for UrlBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut url = self.base.clone();
+        url.push_str(&self.path);
+        if self.params.is_empty() {
+            return write!(f, "{}", url);
+        }
+        let mut iter = self.params.iter();
+        let first = iter.next().unwrap();
+        url.push('?');
+        url.push_str(&first.0);
+        url.push('=');
+        url.push_str(&first.1);
+        for param in iter {
+            url.push('&');
+            url.push_str(&param.0);
+            url.push('=');
+            url.push_str(&param.1);
+        }
+        write!(f, "{}", url)
     }
 }

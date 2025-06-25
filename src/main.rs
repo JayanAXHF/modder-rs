@@ -1,5 +1,5 @@
 mod actions;
-mod cli;
+pub mod curseforge_wrapper;
 pub mod modrinth_wrapper;
 use clap::Parser;
 use cli::*;
