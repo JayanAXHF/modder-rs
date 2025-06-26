@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::cli::Source;
 use crate::gh_releases::{self, GHReleasesAPI};
-use crate::metadata::{Error, Metadata};
+use crate::metadata::{Error as MetadataError, Metadata};
 use crate::{Link, calc_sha512};
 use clap::ValueEnum;
 use colored::Colorize;
@@ -13,7 +13,21 @@ use std::sync::Arc;
 use std::{fmt::Display, fs};
 use tracing::{self, debug, error, info, warn};
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Error sending the request. This may mean that the request was malformed: {0:?}")]
+    RequestErr(#[from] reqwest::Error),
+    #[error("Error deserializing the response: {0:?}")]
+    SerdeErr(#[from] serde_json::Error),
+    #[error("No versions found for mod {0}")]
+    NoVersionsFound(String),
+    // TODO: Move this to `lib.rs`
+    #[error("Metadata error: {0}")]
+    MetadataErr(#[from] MetadataError),
+}
+
 type Result<T> = std::result::Result<T, Error>;
+
 const GRAY: (u8, u8, u8) = (128, 128, 128);
 
 #[derive(Debug, Deserialize, Clone)]
@@ -466,7 +480,7 @@ pub async fn update_from_file(
         let metadata = metadata.unwrap();
         let source: Result<Source> = match metadata.get("source") {
             Some(source) => Ok(Source::from_str(source, true).unwrap()),
-            None => Err(Error::NoKeyFound),
+            None => Err(Error::MetadataErr(MetadataError::NoKeyFound)),
         };
 
         if let Ok(Source::Github) = source {
