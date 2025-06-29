@@ -280,7 +280,12 @@ impl Component for ToggleComponent {
                     Style::default().add_modifier(Modifier::DIM),
                 );
                 let top_line = Line::from(vec![name_span, version_span]);
-                let url = format!("https://modrinth.com/mod/{}", item.project_id);
+                let url = if item.source == Source::Modrinth {
+                    format!("https://modrinth.com/mod/{}", item.project_id)
+                } else {
+                    format!("https://github.com/{}", item.project_id)
+                };
+
                 let new_link = Link::new(url.clone(), url);
 
                 let lines = vec![
@@ -458,14 +463,15 @@ async fn get_mods(dir: PathBuf) -> Vec<ToggleListItem> {
             let enabled = !path_str.contains("disabled");
             let version_data = VersionData::from_hash(hash).await;
             if version_data.is_err() {
-                error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                 let metadata = Metadata::get_all_metadata(path_str.clone().into());
                 if metadata.is_err() {
+                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                     return None;
                 }
                 let metadata = metadata.unwrap();
                 let source = metadata.get("source").unwrap();
                 if source.is_empty() {
+                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                     return None;
                 }
                 let repo = metadata.get("repo").unwrap();
@@ -478,7 +484,7 @@ async fn get_mods(dir: PathBuf) -> Vec<ToggleListItem> {
                     game_version: None,
                     category: None,
                     version_type: "GITHUB".to_string(),
-                    project_id: repo_name.to_string(),
+                    project_id: repo.to_string(),
                     enabled,
                     path: path_str.to_string(),
                 };

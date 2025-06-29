@@ -187,9 +187,13 @@ impl AddListItem for GithubAddListItem {
 impl Downloadable for GithubAddListItem {
     async fn download(&self, dir: PathBuf) -> Result<()> {
         let gh = GHReleasesAPI::new();
-        let version_data = gh.get_releases(&self.repo, &self.game_version).await;
+        let [owner, repo] = self.repo.split('/').collect::<Vec<&str>>()[..] else {
+            error!("Invalid repo {}", self.repo);
+            return Ok(());
+        };
+        let version_data = gh.get_releases(owner, repo).await;
         if let Ok(version_data) = version_data {
-            let release = get_mod_from_release(&version_data, "fabric", &self.version).await;
+            let release = get_mod_from_release(&version_data, "fabric", &self.game_version).await;
             if let Ok(release) = release {
                 let url = release.get_download_url().unwrap();
                 let file_name = url.path_segments().unwrap().last().unwrap();
@@ -204,8 +208,8 @@ impl Downloadable for GithubAddListItem {
             }
         } else {
             error!(
-                "Could not find version {} for {}",
-                &self.version, &self.name
+                "Could not find version {} for {}: {version_data:?}",
+                &self.game_version, &self.name
             );
         }
         Ok(())
@@ -352,16 +356,104 @@ impl AddComponent {
             _ => State::Normal,
         };
     }
+    pub fn search(&mut self) -> Result<Option<Action>> {
+        let version = self.version_input.value();
+        if version.is_empty() {
+            return Ok(None);
+        }
+        let search_term = self.input.value();
+        let first_search = self.search_result_list.selected_items.is_empty();
+        let search_results = match self.source_list.state.selected() {
+            Some(selected) => {
+                let selected = self.source_list.list_items[selected].clone();
+                match selected {
+                    Source::Modrinth => {
+                        let mods =
+                            futures::executor::block_on(Modrinth::search_mods(search_term, 100, 0));
+                        debug!(search = ?search_term);
+                        let hits = mods.hits;
+                        debug!(search = ?hits);
+                        hits.into_iter()
+                            .map(|mod_| {
+                                let mut mod_ = ModrinthAddListItem {
+                                    name: mod_.title,
+                                    source: Source::Modrinth,
+                                    project_id: mod_.project_id,
+                                    version: "".to_string(),
+                                    game_version: version.to_string(),
+                                    slug: mod_.slug,
+                                    selected: true,
+                                };
+
+                                let enabled = if first_search {
+                                    false
+                                } else {
+                                    self.search_result_list
+                                        .selected_items
+                                        .contains(&SearchResult::ModrinthMod(mod_.clone()))
+                                };
+
+                                mod_.selected = enabled;
+                                SearchResult::ModrinthMod(mod_)
+                            })
+                            .collect::<Vec<SearchResult>>()
+                    }
+                    Source::Github => {
+                        let split = search_term.split('/').collect::<Vec<&str>>();
+                        let repo = split.last().unwrap_or(&"");
+                        let owner = split.first().unwrap_or(&"");
+                        let releases = futures::executor::block_on(
+                            GHReleasesAPI::new().get_releases(owner, repo),
+                        );
+                        if let Ok(releases) = releases {
+                            releases
+                                .into_iter()
+                                .filter_map(|release| {
+                                    if !release.name.clone()?.contains(version) {
+                                        return None;
+                                    };
+                                    let mut github = GithubAddListItem {
+                                        name: release.name?,
+                                        source: Source::Github,
+                                        repo: search_term.to_string(),
+                                        version: release.tag_name.clone(),
+                                        game_version: version.to_string(),
+                                        selected: false,
+                                    };
+                                    let enabled = if first_search {
+                                        false
+                                    } else {
+                                        self.search_result_list
+                                            .selected_items
+                                            .contains(&SearchResult::Github(github.clone()))
+                                    };
+                                    github.selected = enabled;
+                                    Some(SearchResult::Github(github))
+                                })
+                                .collect::<Vec<SearchResult>>()
+                        } else {
+                            error!(err=?releases.err().unwrap().to_string(), "Error finding or downloading mod");
+                            Vec::new()
+                        }
+                    }
+                }
+            }
+            None => Vec::new(),
+        };
+        self.search_result_list.list_items = search_results;
+        self.state = State::SearchResultList;
+        Ok(None)
+    }
 }
 
 impl ModrinthAddListItem {
     pub fn format(&self) -> Vec<Line<'static>> {
         let selected_indicator = if self.selected {
-            Span::styled("[x]", Style::default().fg(Color::Green))
+            Span::styled("[x] ", Style::default().fg(Color::Green))
         } else {
-            Span::raw("[ ]")
+            Span::raw("[ ] ")
         };
-        let padding = Span::raw("   ");
+        let padding = Span::raw("    ");
         vec![
             Line::from(vec![
                 selected_indicator,
@@ -370,10 +462,6 @@ impl ModrinthAddListItem {
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(
-                    format!("v{}", self.version),
-                    Style::default().fg(Color::Green),
-                ),
             ]),
             Line::from(vec![
                 padding.clone(),
@@ -407,11 +495,11 @@ impl ModrinthAddListItem {
 impl GithubAddListItem {
     pub fn format(&self) -> Vec<Line<'static>> {
         let selected_indicator = if self.selected {
-            Span::styled("[x]", Style::default().fg(Color::Green))
+            Span::styled("[x] ", Style::default().fg(Color::Green))
         } else {
-            Span::raw("[ ]")
+            Span::raw("[ ] ")
         };
-        let padding = Span::raw("   ");
+        let padding = Span::raw("    ");
         vec![
             Line::from(vec![
                 selected_indicator,
@@ -421,7 +509,7 @@ impl GithubAddListItem {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    format!("v{}", self.version),
+                    format!("v. {}", self.version),
                     Style::default().fg(Color::Green),
                 ),
             ]),
@@ -497,94 +585,7 @@ impl Component for AddComponent {
             match key.code {
                 KeyCode::Tab | KeyCode::Esc => self.toggle_state(),
                 KeyCode::Enter => {
-                    let version = self.version_input.value();
-                    if version.is_empty() {
-                        return Ok(None);
-                    }
-                    let search_term = self.input.value();
-                    let first_search = self.search_result_list.selected_items.is_empty();
-                    let search_results = match self.source_list.state.selected() {
-                        Some(selected) => {
-                            let selected = self.source_list.list_items[selected].clone();
-                            match selected {
-                                Source::Modrinth => {
-                                    let mods = futures::executor::block_on(Modrinth::search_mods(
-                                        search_term,
-                                        100,
-                                        0,
-                                    ));
-                                    debug!(search = ?search_term);
-                                    let hits = mods.hits;
-                                    debug!(search = ?hits);
-                                    hits.into_iter()
-                                        .map(|mod_| {
-                                            let mut mod_ = ModrinthAddListItem {
-                                                name: mod_.title,
-                                                source: Source::Modrinth,
-                                                project_id: mod_.project_id,
-                                                version: "".to_string(),
-                                                game_version: version.to_string(),
-                                                slug: mod_.slug,
-                                                selected: true,
-                                            };
-
-                                            let enabled = if first_search {
-                                                false
-                                            } else {
-                                                self.search_result_list.selected_items.contains(
-                                                    &SearchResult::ModrinthMod(mod_.clone()),
-                                                )
-                                            };
-
-                                            mod_.selected = enabled;
-                                            SearchResult::ModrinthMod(mod_)
-                                        })
-                                        .collect::<Vec<SearchResult>>()
-                                }
-                                Source::Github => {
-                                    let split = search_term.split('/').collect::<Vec<&str>>();
-                                    let repo = split.last().unwrap_or(&"");
-                                    let owner = split.first().unwrap_or(&"");
-                                    let releases = futures::executor::block_on(
-                                        GHReleasesAPI::new().get_releases(owner, repo),
-                                    );
-                                    if let Ok(releases) = releases {
-                                        releases
-                                            .into_iter()
-                                            .filter_map(|release| {
-                                                if !release.name.clone()?.contains(version) {
-                                                    return None;
-                                                };
-                                                let mut github = GithubAddListItem {
-                                                    name: release.name?,
-                                                    source: Source::Github,
-                                                    repo: search_term.to_string(),
-                                                    version: release.tag_name.clone(),
-                                                    game_version: version.to_string(),
-                                                    selected: false,
-                                                };
-                                                let enabled = if first_search {
-                                                    false
-                                                } else {
-                                                    self.search_result_list.selected_items.contains(
-                                                        &SearchResult::Github(github.clone()),
-                                                    )
-                                                };
-                                                github.selected = enabled;
-                                                Some(SearchResult::Github(github))
-                                            })
-                                            .collect::<Vec<SearchResult>>()
-                                    } else {
-                                        error!(err=?releases.err().unwrap().to_string(), "Error finding or downloading mod");
-                                        Vec::new()
-                                    }
-                                }
-                            }
-                        }
-                        None => Vec::new(),
-                    };
-                    self.search_result_list.list_items = search_results;
-                    self.state = State::SearchResultList;
+                    self.search()?;
                 }
                 _ => {
                     self.input.handle_event(&crossterm::event::Event::Key(key));
@@ -599,6 +600,12 @@ impl Component for AddComponent {
                 KeyCode::Char('k') | KeyCode::Up => self.source_list.select_previous(),
                 KeyCode::Char('g') | KeyCode::Home => self.source_list.select_first(),
                 KeyCode::Char('G') | KeyCode::End => self.source_list.select_last(),
+                KeyCode::Char('q') => return Ok(Some(Action::Quit)),
+                KeyCode::Enter => {
+                    if !self.version_input.value().is_empty() && !self.input.value().is_empty() {
+                        self.search()?;
+                    }
+                }
                 KeyCode::Esc => {
                     self.state = State::Normal;
                 }
@@ -610,6 +617,11 @@ impl Component for AddComponent {
             match key.code {
                 KeyCode::Tab | KeyCode::Esc => self.state = State::Normal,
                 KeyCode::Enter => {
+                    if !self.version_input.value().is_empty() && !self.input.value().is_empty() {
+                        self.search()?;
+                        return Ok(None);
+                    }
+
                     self.state = State::Search;
                 }
                 key => {
@@ -708,6 +720,10 @@ impl Component for AddComponent {
                 KeyCode::Char('k') | KeyCode::Up => self.selected_list_state.select_previous(),
                 KeyCode::Char('g') | KeyCode::Home => self.selected_list_state.select_first(),
                 KeyCode::Char('G') | KeyCode::End => self.selected_list_state.select_last(),
+                KeyCode::Char('q') => return Ok(Some(Action::Quit)),
+                KeyCode::Char('J') => {
+                    self.state = State::VersionInput;
+                }
                 KeyCode::Esc => {
                     self.state = State::Normal;
                 }
@@ -881,16 +897,16 @@ impl Component for AddComponent {
 
         let log_widget = TuiLoggerWidget::default()
             .style_error(Style::default().fg(Color::Red))
-            .style_debug(Style::default().fg(Color::Green))
+            .style_debug(Style::default().fg(Color::Cyan))
             .style_warn(Style::default().fg(Color::Yellow))
             .style_trace(Style::default().fg(Color::Magenta))
-            .style_info(Style::default().fg(Color::Cyan))
+            .style_info(Style::default().fg(Color::Green))
             .output_separator(':')
             .output_timestamp(Some("%H:%M:%S".to_string()))
-            .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
-            .output_target(true)
-            .output_file(true)
-            .output_line(true)
+            .output_level(Some(TuiLoggerLevelOutput::Long))
+            .output_target(false)
+            .output_file(false)
+            .output_line(false)
             .state(&self.logger_state)
             .block(
                 Block::default()
@@ -1008,14 +1024,15 @@ async fn get_mods(dir: PathBuf) -> Vec<CurrentModsListItem> {
             let enabled = !path_str.contains("disabled");
             let version_data = VersionData::from_hash(hash).await;
             if version_data.is_err() {
-                error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                 let metadata = Metadata::get_all_metadata(path_str.clone().into());
                 if metadata.is_err() {
+                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                     return None;
                 }
                 let metadata = metadata.unwrap();
                 let source = metadata.get("source").unwrap();
                 if source.is_empty() {
+                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
                     return None;
                 }
                 let repo = metadata.get("repo").unwrap();
