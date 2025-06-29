@@ -1,0 +1,61 @@
+[package]
+name = "tui"
+version = "0.1.0"
+edition = "2024"
+description = "TUI Wrapper for Modder-rs"
+authors = ["JayanAXHF <sunil.chdry@gmail.com>"]
+build = "build.rs"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+better-panic = "0.3.0"
+clap = { version = "4.5.20", features = [
+    "derive",
+    "cargo",
+    "wrap_help",
+    "unicode",
+    "string",
+    "unstable-styles",
+] }
+color-eyre = "0.6.3"
+config = "0.14.0"
+crossterm = { version = "0.29", features = ["serde", "event-stream"] }
+derive_deref = "1.1.1"
+directories = "5.0.1"
+futures = "0.3.31"
+human-panic = "2.0.2"
+json5 = "0.4.1"
+lazy_static = "1.5.0"
+libc = "0.2.161"
+pretty_assertions = "1.4.1"
+ratatui = { version = "0.29.0", features = ["serde", "macros"] }
+serde = { version = "1.0.211", features = ["derive"] }
+serde_json = "1.0.132"
+signal-hook = "0.3.17"
+strip-ansi-escapes = "0.2.0"
+strum = { version = "0.26.3", features = ["derive"] }
+tokio = { version = "1.40.0", features = ["full"] }
+tokio-util = "0.7.12"
+tracing = "0.1.40"
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "serde"] }
+modder = { path = "../core" }
+regex = "1.11.1"
+colored = "3.0.0"
+textwrap = "0.16.2"
+tui-widgets = "0.4.1"
+tui-input = { version = "0.12.1", features = ["ratatui"] }
+throbber-widgets-tui = "0.8.0"
+tui-logger = { version = "0.17.3", features = ["tracing", "tracing-subscriber", "tracing-support"] }
+env_logger = "0.11.8"
+
+
+[build-dependencies]
+anyhow = "1.0.90"
+vergen-gix = { version = "1.0.2", features = ["build", "cargo"] }
+
+
+[patch.crates-io]
+crossterm = "0.28.1"

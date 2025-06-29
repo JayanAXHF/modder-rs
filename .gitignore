@@ -1,5 +1,7 @@
-/target
-/test
+**/target
+**/test
+**/test_2
+**/.DS_Store
 /.git
 **/*.jukit
-/test2
+**/test2

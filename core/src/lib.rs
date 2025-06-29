@@ -2,7 +2,7 @@
 pub mod cli;
 pub mod gh_releases;
 pub mod metadata;
-mod modrinth_wrapper;
+pub mod modrinth_wrapper;
 use gh_releases::GHReleasesAPI;
 use hmac_sha512::Hash;
 use modrinth_wrapper::modrinth;
@@ -115,7 +115,7 @@ pub fn get_minecraft_dir() -> PathBuf {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Default)]
 pub struct Link {
     pub text: String,
     pub url: String,

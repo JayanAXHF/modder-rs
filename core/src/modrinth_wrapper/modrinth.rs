@@ -170,6 +170,9 @@ impl GetProject {
     pub fn get_categories(&self) -> Vec<String> {
         self.categories.clone()
     }
+    pub fn get_slug(&self) -> String {
+        self.slug.clone()
+    }
 }
 
 pub struct Modrinth;
@@ -213,7 +216,7 @@ impl Modrinth {
         let versions = versions.unwrap();
 
         if versions.is_empty() {
-            error!("No versions found for mod {}", mod_name);
+            error!("No versions found for mod {} for {}", mod_name, version);
             return None;
         }
         Some(versions[0].clone())
@@ -457,6 +460,15 @@ impl VersionData {
         ));
 
         output
+    }
+    pub fn get_game_versions(&self) -> Option<Vec<String>> {
+        self.game_versions.clone()
+    }
+    pub fn get_version(&self) -> String {
+        self.version_number.clone().unwrap_or_default()
+    }
+    pub fn get_version_type(&self) -> String {
+        self.version_type.clone().unwrap_or_default()
     }
 }
 

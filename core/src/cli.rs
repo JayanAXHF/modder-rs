@@ -107,8 +107,9 @@ impl Display for Commands {
     }
 }
 
-#[derive(Debug, Clone, clap::ValueEnum, PartialEq)]
+#[derive(Debug, Clone, clap::ValueEnum, PartialEq, Default, Hash, Eq)]
 pub enum Source {
+    #[default]
     Modrinth,
     Github,
 }
