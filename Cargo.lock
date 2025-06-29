@@ -2963,8 +2963,10 @@ dependencies = [
 name = "modder"
 version = "0.1.0"
 dependencies = [
+ "better-panic",
  "chrono",
  "clap",
+ "color-eyre",
  "colored",
  "futures",
  "hex",

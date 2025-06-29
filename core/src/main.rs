@@ -1,3 +1,4 @@
+use color_eyre::eyre::Result;
 mod actions;
 pub mod curseforge_wrapper;
 pub mod modrinth_wrapper;
@@ -10,7 +11,21 @@ use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
+    #[cfg(not(debug_assertions))]
+    {
+        color_eyre::install()?;
+    }
+    #[cfg(debug_assertions)]
+    {
+        std::panic::set_hook(Box::new(move |panic_info| {
+            better_panic::Settings::auto()
+                .most_recent_first(false)
+                .lineno_suffix(true)
+                .verbosity(better_panic::Verbosity::Full)
+                .create_panic_handler()(panic_info);
+        }));
+    }
     let cli = Cli::parse();
 
     let filter = if cli.silent {
