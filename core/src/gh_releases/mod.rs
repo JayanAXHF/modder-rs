@@ -1,5 +1,4 @@
 use crate::UrlBuilder;
-
 mod structs;
 
 const GH_RELEASES_API: &str = "https://api.github.com/repos";
@@ -24,6 +23,8 @@ pub enum Error {
     ModNotFound,
     #[error("Error writing the mod to a file: {0}")]
     WriteFileErr(#[from] std::io::Error),
+    #[error("Unknown error: {0}")]
+    UnknownError(#[from] color_eyre::eyre::Report),
 }
 type Result<T> = std::result::Result<T, Error>;
 

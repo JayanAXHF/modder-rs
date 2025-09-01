@@ -1,53 +1,32 @@
 use crate::modrinth_wrapper::modrinth::Mod;
 use cli::Source;
+use color_eyre::eyre::bail;
 use colored::Colorize;
+use curseforge_wrapper::{API_KEY, CurseForgeAPI, CurseForgeMod};
 use gh_releases::GHReleasesAPI;
 use itertools::Itertools;
 use metadata::Metadata;
-use modder::get_minecraft_dir;
 use modrinth_wrapper::modrinth::{self, VersionData};
 use modrinth_wrapper::modrinth::{GetProject, Modrinth};
+use percent_encoding::percent_decode;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use tabwriter::TabWriter;
+use tokio::task::JoinHandle;
 
 use crate::*;
 const GRAY: (u8, u8, u8) = (128, 128, 128);
 
-pub async fn run(mut cli: Cli) {
+pub async fn run(cli: Cli) -> color_eyre::Result<()> {
     let dependencies = Arc::new(Mutex::new(Vec::new()));
-    let default_minecraft_dir: std::path::PathBuf = get_minecraft_dir();
-    if let Commands::InPlace { version, limit } = &cli.command {
-        let options = vec![
-            Commands::QuickAdd {
-                version: version.clone(),
-                limit: *limit,
-            },
-            Commands::Update {
-                dir: default_minecraft_dir.clone(),
-                version: version.clone(),
-                delete_previous: false,
-                token: None,
-            },
-            Commands::Add {
-                mod_: String::new(),
-                version: version.clone(),
-                source: None,
-                token: None,
-            },
-            Commands::Toggle {
-                version: version.clone(),
-                dir: default_minecraft_dir,
-            },
-        ];
-        let options = options.into_iter().collect::<Vec<Commands>>();
-        let prompt = inquire::Select::new("Select Option", options);
-        let option = prompt.prompt().unwrap();
-        cli.command = option;
-    }
     match cli.command {
-        Commands::QuickAdd { version, limit } => {
+        Commands::QuickAdd {
+            version,
+            limit,
+            loader,
+        } => {
             let version = if let Some(version) = version {
                 version
             } else {
@@ -111,13 +90,22 @@ pub async fn run(mut cli: Cli) {
             for mod_ in mods {
                 let version = version.clone();
                 let dependencies = Arc::clone(&dependencies);
+                let loader = loader.clone();
                 let handle = tokio::spawn(async move {
-                    let version_data = Modrinth::get_version(&mod_.slug, &version).await;
+                    let version_data =
+                        Modrinth::get_version(&mod_.slug, &version, loader.clone()).await;
                     if let Some(version_data) = version_data {
                         info!("Downloading {}", mod_.title);
                         modrinth::download_file(&version_data.clone().files.unwrap()[0], "./")
                             .await;
-                        Modrinth::download_dependencies(&mod_, &version, dependencies, "./").await;
+                        Modrinth::download_dependencies(
+                            &mod_,
+                            &version,
+                            dependencies,
+                            "./",
+                            loader,
+                        )
+                        .await;
                     }
                 });
                 handles.push(handle);
@@ -125,12 +113,16 @@ pub async fn run(mut cli: Cli) {
             for handle in handles {
                 handle.await.unwrap();
             }
+            return Ok(());
         }
         Commands::Update {
             dir,
             version,
             delete_previous,
             token,
+            source,
+            other_sources,
+            loader,
         } => {
             let version = if let Some(version) = version {
                 version
@@ -140,22 +132,30 @@ pub async fn run(mut cli: Cli) {
             let update_dir = dir.into_os_string().into_string().unwrap();
             let mut github = GHReleasesAPI::new();
             if let Some(token) = token {
-                github.token(token);
+                github.token(token.clone());
             }
+            let curseforge = CurseForgeAPI::new(API_KEY.to_string());
+
             modder::update_dir(
                 &mut github,
+                curseforge,
                 &update_dir,
                 &version,
                 delete_previous,
                 &update_dir,
+                source,
+                other_sources,
+                loader,
             )
-            .await;
+            .await?;
         }
         Commands::Add {
             mod_,
             version,
             source,
             token,
+            loader,
+            dir,
         } => {
             let version = if let Some(version) = version {
                 version
@@ -172,129 +172,137 @@ pub async fn run(mut cli: Cli) {
                     }
                 }
             };
-            if source == Source::Github {
-                let mod_ = mod_.split('/').collect_vec();
-                let mut gh = GHReleasesAPI::new();
-                if let Some(token) = token {
-                    gh.token(token);
-                }
-                let releases = gh.get_releases(mod_[0], mod_[1]).await.unwrap();
-                //  TODO: Add support for other loaders
-                let release =
-                    gh_releases::get_mod_from_release(&releases, "fabric", &version).await;
-                if let Ok(release) = release {
+            match source {
+                Source::Github => {
+                    let mod_ = mod_.split('/').collect_vec();
+                    let mut gh = GHReleasesAPI::new();
+                    if let Some(token) = token {
+                        gh.token(token);
+                    }
+                    let releases = gh.get_releases(mod_[0], mod_[1]).await.unwrap();
+                    //  TODO: Add support for other loaders
+                    let release =
+                        gh_releases::get_mod_from_release(&releases, "fabric", &version).await?;
                     let url = release.get_download_url().unwrap();
-                    let file_name = url.path_segments().unwrap().last().unwrap();
+                    let file_name =
+                        percent_decode(url.path_segments().unwrap().last().unwrap().as_bytes())
+                            .decode_utf8_lossy()
+                            .to_string();
                     let path = format!("./{}", file_name);
                     info!("Downloading {}", file_name);
                     release
                         .download(path.clone().into(), mod_.join("/"))
-                        .await
-                        .unwrap();
-                } else {
-                    error!(err=?release.err().unwrap().to_string(), "Error finding or downloading mod");
+                        .await?;
                 }
-                return;
-            }
-            let res = Modrinth::search_mods(&mod_, 100, 0).await;
-            let hits = res.hits;
-            if hits.is_empty() {
-                error!("Could not find mod {}", mod_);
-                process::exit(1);
-            }
-            if hits.len() == 1 {
-                let mod_ = hits[0].clone();
-                let version_data = Modrinth::get_version(&mod_.slug, &version).await;
-                if let Some(version_data) = version_data {
-                    info!("Downloading {}", mod_.title);
-                    modrinth::download_file(&version_data.clone().files.unwrap()[0], "./").await;
-                    Modrinth::download_dependencies(&mod_.into(), &version, dependencies, "./")
-                        .await;
-                } else {
-                    error!("Could not find version {} for {}", version, mod_.title);
-                    process::exit(1);
-                }
-                return;
-            }
-            let prompt = inquire::MultiSelect::new("Select Mods", hits);
-            let hits = prompt.prompt().unwrap();
-            let mut handles = Vec::new();
-            for hit in hits {
-                let version = version.clone();
-                let dependencies = Arc::clone(&dependencies);
-                let handle = tokio::spawn(async move {
-                    let version_data = Modrinth::get_version(&hit.slug, &version).await;
-                    if let Some(version_data) = version_data {
-                        info!("Downloading {}", hit.title);
-                        modrinth::download_file(&version_data.clone().files.unwrap()[0], "./")
-                            .await;
-                        Modrinth::download_dependencies(&hit.into(), &version, dependencies, "./")
-                            .await;
-                    } else {
-                        error!("Could not find version {} for {}", version, hit.title);
-                        process::exit(1);
+                Source::Modrinth => {
+                    let res = Modrinth::search_mods(&mod_, 100, 0).await;
+                    let hits = res.hits;
+                    if hits.is_empty() {
+                        bail!("Could not find mod {}", mod_);
                     }
-                });
-                handles.push(handle);
-            }
-            for handle in handles {
-                handle.await.unwrap();
-            }
-        }
-        Commands::Toggle { version: _, dir } => {
-            let files = fs::read_dir(dir.clone()).unwrap();
-            let toggle_map = files.map(|f| {
-                let f = f.unwrap();
-                let path = f.path().to_str().unwrap().to_string();
-                let file_name = f.file_name().to_string_lossy().to_string();
-                if file_name.ends_with(".disabled") {
-                    (path, false)
-                } else {
-                    (path, true)
-                }
-            });
-            let toggle_map = toggle_map.collect::<HashMap<_, _>>();
-            let filenames = toggle_map
-                .keys()
-                .map(|f| f.split('/').last().unwrap())
-                .collect::<Vec<&str>>();
-            let defaults = filenames
-                .iter()
-                .enumerate()
-                .filter_map(|(i, f)| {
-                    let path = &format!("{}{}", dir.to_str().unwrap(), f);
-                    if *toggle_map.get(path).unwrap() {
-                        Some(i)
-                    } else {
-                        None
+                    if hits.len() == 1 {
+                        let mod_ = hits[0].clone();
+                        let version_data =
+                            Modrinth::get_version(&mod_.slug, &version, loader.clone()).await;
+                        if let Some(version_data) = version_data {
+                            info!("Downloading {}", mod_.title);
+                            modrinth::download_file(&version_data.clone().files.unwrap()[0], "./")
+                                .await;
+                            Modrinth::download_dependencies(
+                                &mod_.into(),
+                                &version,
+                                dependencies.clone(),
+                                "./",
+                                loader,
+                            )
+                            .await;
+                            return Ok(());
+                        } else {
+                            info!(
+                                "Could not find version {} for {}, trying curseforge",
+                                version, mod_.title
+                            );
+                            bail!("Could not find version {} for {}", version, mod_.title);
+                        }
                     }
-                })
-                .collect::<Vec<usize>>();
+                    let prompt = inquire::MultiSelect::new("Select Mods", hits);
+                    let hits = prompt.prompt().unwrap();
+                    let mut handles = Vec::new();
+                    for hit in hits {
+                        let loader = loader.clone();
+                        let version = version.clone();
+                        let dependencies = Arc::clone(&dependencies);
+                        let handle = tokio::spawn(async move {
+                            let version_data =
+                                Modrinth::get_version(&hit.slug, &version, loader.clone()).await;
+                            if let Some(version_data) = version_data {
+                                info!("Downloading {}", hit.title);
+                                modrinth::download_file(
+                                    &version_data.clone().files.unwrap()[0],
+                                    "./",
+                                )
+                                .await;
+                                Modrinth::download_dependencies(
+                                    &hit.into(),
+                                    &version,
+                                    dependencies,
+                                    "./",
+                                    loader,
+                                )
+                                .await;
+                            } else {
+                                bail!("Could not find version {} for {}", version, hit.title);
+                            }
+                            Ok(())
+                        });
 
-            let prompt =
-                inquire::MultiSelect::new("Select Mods", filenames).with_default(&defaults);
-            let filenames = prompt.prompt().unwrap();
-            for filename in toggle_map.iter() {
-                let name = &filename.0.split('/').last().unwrap_or("");
-                let predicate = !filenames.contains(name);
-                let path = filename.0.clone();
-                if predicate {
-                    if !path.ends_with(".disabled") {
-                        fs::rename(&path, format!("{}.disabled", path)).unwrap();
+                        handles.push(handle);
                     }
-                    continue;
+                    for handle in handles {
+                        handle.await??;
+                    }
                 }
-                if path.ends_with(".disabled") {
-                    fs::rename(&path, path.replace(".disabled", "")).unwrap();
+                Source::CurseForge => {
+                    let api = CurseForgeAPI::new(API_KEY.to_string());
+                    let dependencies = Arc::new(Mutex::new(Vec::new()));
+                    let mods = api.search_mods(&version, loader, &mod_).await.unwrap();
+                    let prompt = inquire::MultiSelect::new("Select mods", mods);
+                    let selected = prompt.prompt().unwrap();
+                    let mut handles = Vec::new();
+                    let dir = Arc::new(dir.clone());
+                    for mod_ in selected {
+                        dbg!(&mod_.latest_files[0].file_fingerprint);
+                        let dependencies = Arc::clone(&dependencies);
+                        let version = version.clone();
+                        let api = api.clone();
+                        let dir = dir.clone();
+                        let handle: JoinHandle<Result<()>> = tokio::spawn(async move {
+                            info!("Downloading {}", mod_.name);
+                            let v = mod_.get_version_and_loader(&version).unwrap();
+
+                            api.download_mod(mod_.id, v.file_id, dir.to_path_buf())
+                                .await?;
+                            let deps = api.get_dependencies(mod_.id, &version).await?;
+                            for dep in deps {
+                                if dependencies.lock().await.contains(&dep.id) {
+                                    info!("Skipping dependency {}", dep.name);
+                                }
+                                info!("Downloading dependency {}", dep.name);
+                                let v = dep.get_version_and_loader(&version).unwrap();
+                                api.download_mod(dep.id, v.file_id, dir.to_path_buf())
+                                    .await?;
+                            }
+                            Ok(())
+                        });
+                        handles.push(handle);
+                    }
+                    for handle in handles {
+                        handle.await?.unwrap();
+                    }
                 }
             }
         }
-        Commands::InPlace {
-            version: _,
-            limit: _,
-        } => {
-            unreachable!()
-        }
+        Commands::Toggle { version: _, dir } => toggle(dir)?,
         Commands::List { dir, verbose } => {
             let files = fs::read_dir(dir).unwrap();
 
@@ -302,10 +310,9 @@ pub async fn run(mut cli: Cli) {
             let mut handles = Vec::new();
             for f in files {
                 let handle = tokio::spawn(async move {
-                    if f.is_err() {
+                    let Ok(f) = f else {
                         return None;
-                    }
-                    let f = f.unwrap();
+                    };
                     let path = f.path();
                     let extension = path
                         .extension()
@@ -326,13 +333,15 @@ pub async fn run(mut cli: Cli) {
                         if metadata.is_err() {
                             return None;
                         }
-                        let metadata = metadata.unwrap();
-                        let source = metadata.get("source").unwrap();
+                        let Ok(metadata) = metadata else {
+                            return None;
+                        };
+                        let source = metadata.get("source")?;
                         if source.is_empty() {
                             return None;
                         }
-                        let repo = metadata.get("repo").unwrap();
-                        let repo_name = repo.split('/').last().unwrap();
+                        let repo = metadata.get("repo")?;
+                        let repo_name = repo.split('/').last()?;
                         let link = Link::new(
                             repo_name.to_string(),
                             format!("https://github.com/{}", repo),
@@ -354,7 +363,9 @@ pub async fn run(mut cli: Cli) {
                         };
                         return Some(out);
                     }
-                    let version_data = version_data.unwrap();
+                    let Ok(version_data) = version_data else {
+                        return None;
+                    };
                     let project = GetProject::from_id(&version_data.project_id).await?;
                     let out = if verbose {
                         version_data.format_verbose(&project.get_title(), &project.get_categories())
@@ -379,5 +390,55 @@ pub async fn run(mut cli: Cli) {
             let written = String::from_utf8(tw.into_inner().unwrap()).unwrap();
             println!("{}", written);
         }
+    };
+    Ok(())
+}
+
+fn toggle(dir: PathBuf) -> color_eyre::Result<()> {
+    let files = fs::read_dir(dir.clone()).unwrap();
+    let toggle_map = files.map(|f| {
+        let f = f.unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+        let file_name = f.file_name().to_string_lossy().to_string();
+        if file_name.ends_with(".disabled") {
+            (path, false)
+        } else {
+            (path, true)
+        }
+    });
+    let toggle_map = toggle_map.collect::<HashMap<_, _>>();
+    let filenames = toggle_map
+        .keys()
+        .map(|f| f.split('/').last().unwrap())
+        .collect::<Vec<&str>>();
+    let defaults = filenames
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| {
+            let path = &format!("{}{}", dir.to_str().unwrap(), f);
+            if *toggle_map.get(path).unwrap() {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<usize>>();
+
+    let prompt = inquire::MultiSelect::new("Select Mods", filenames).with_default(&defaults);
+    let filenames = prompt.prompt().unwrap();
+    for filename in toggle_map.iter() {
+        let name = &filename.0.split('/').last().unwrap_or("");
+        let predicate = !filenames.contains(name);
+        let path = filename.0.clone();
+        if predicate {
+            if !path.ends_with(".disabled") {
+                fs::rename(&path, format!("{}.disabled", path)).unwrap();
+            }
+            continue;
+        }
+        if path.ends_with(".disabled") {
+            fs::rename(&path, path.replace(".disabled", "")).unwrap();
+        }
     }
+    Ok(())
 }

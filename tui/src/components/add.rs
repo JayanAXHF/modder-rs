@@ -4,7 +4,7 @@ use color_eyre::Result;
 use crossterm::event::KeyCode;
 use futures::lock::Mutex;
 use modder::{
-    calc_sha512,
+    MOD_LOADERS, ModLoader, calc_sha512,
     cli::Source,
     gh_releases::{GHReleasesAPI, get_mod_from_release},
     metadata::Metadata,
@@ -19,6 +19,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use strum::IntoEnumIterator;
 use style::palette::tailwind::SLATE;
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::UnboundedSender;
@@ -43,6 +44,7 @@ pub struct AddComponent {
     selected_list_state: ListState,
     logger_state: TuiWidgetState,
     throbber_state: ThrobberState,
+    loader_list: LoaderList,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +94,7 @@ pub struct ModrinthAddListItem {
     game_version: String,
     slug: String,
     selected: bool,
+    mod_loader: ModLoader,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -102,6 +105,12 @@ pub struct GithubAddListItem {
     version: String,
     game_version: String,
     selected: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoaderList {
+    list_items: Vec<ModLoader>,
+    state: ListState,
 }
 
 impl Hash for GithubAddListItem {
@@ -151,7 +160,9 @@ impl Downloadable for ModrinthAddListItem {
     async fn download(&self, dir: PathBuf) -> Result<()> {
         debug!(game_version = ?&self.game_version);
         debug!(slug = ?&self.slug);
-        let version_data = Modrinth::get_version(&self.slug, &self.game_version).await;
+        debug!(mod_loader = ?&self.mod_loader);
+        let version_data =
+            Modrinth::get_version(&self.slug, &self.game_version, self.mod_loader.clone()).await;
         if let Some(version_data) = version_data {
             modrinth::download_file(
                 &version_data.clone().files.unwrap()[0],
@@ -168,6 +179,7 @@ impl Downloadable for ModrinthAddListItem {
                 &self.game_version,
                 dependencies,
                 &dir.to_string_lossy(),
+                self.mod_loader.clone(),
             )
             .await;
         } else {
@@ -226,6 +238,7 @@ enum State {
     Downloading,
     VersionInput,
     SelectedList,
+    ChangeLoader,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -244,6 +257,16 @@ impl FromIterator<CurrentModsListItem> for CurrentModsList {
         let state = ListState::default();
         Self {
             filtered_items: Vec::new(),
+            list_items: items,
+            state,
+        }
+    }
+}
+impl FromIterator<ModLoader> for LoaderList {
+    fn from_iter<I: IntoIterator<Item = ModLoader>>(iter: I) -> Self {
+        let items = iter.into_iter().collect();
+        let state = ListState::default();
+        Self {
             list_items: items,
             state,
         }
@@ -325,6 +348,27 @@ impl AddList {
     }
 }
 
+impl LoaderList {
+    fn select_none(&mut self) {
+        self.state.select(None);
+    }
+
+    fn select_next(&mut self) {
+        self.state.select_next();
+    }
+    fn select_previous(&mut self) {
+        self.state.select_previous();
+    }
+
+    fn select_first(&mut self) {
+        self.state.select_first();
+    }
+
+    fn select_last(&mut self) {
+        self.state.select_last();
+    }
+}
+
 impl AddComponent {
     pub async fn new(dir: PathBuf) -> Self {
         let dir_clone = dir.clone();
@@ -332,6 +376,7 @@ impl AddComponent {
         let items = items.unwrap_or(Vec::new());
 
         let source_list = vec![Source::Modrinth, Source::Github];
+        let loader_list = MOD_LOADERS.clone();
         AddComponent {
             list: CurrentModsList::from_iter(items),
             mode: Mode::Add,
@@ -346,6 +391,8 @@ impl AddComponent {
                 state: ListState::default(),
                 selected_items: HashSet::new(),
             },
+            loader_list: LoaderList::from_iter(loader_list),
+
             ..Default::default()
         }
     }
@@ -358,6 +405,9 @@ impl AddComponent {
     }
     pub fn search(&mut self) -> Result<Option<Action>> {
         let version = self.version_input.value();
+        let loader_idx = self.loader_list.state.selected().unwrap_or_default();
+
+        let loader = self.loader_list.list_items[loader_idx].clone();
         if version.is_empty() {
             return Ok(None);
         }
@@ -383,6 +433,7 @@ impl AddComponent {
                                     game_version: version.to_string(),
                                     slug: mod_.slug,
                                     selected: true,
+                                    mod_loader: loader.clone(),
                                 };
 
                                 let enabled = if first_search {
@@ -435,6 +486,9 @@ impl AddComponent {
                             error!(err=?releases.err().unwrap().to_string(), "Error finding or downloading mod");
                             Vec::new()
                         }
+                    }
+                    _ => {
+                        todo!()
                     }
                 }
             }
@@ -602,7 +656,10 @@ impl Component for AddComponent {
                 KeyCode::Char('G') | KeyCode::End => self.source_list.select_last(),
                 KeyCode::Char('q') => return Ok(Some(Action::Quit)),
                 KeyCode::Enter => {
-                    if !self.version_input.value().is_empty() && !self.input.value().is_empty() {
+                    if !self.version_input.value().is_empty()
+                        && !self.input.value().is_empty()
+                        && self.loader_list.state.selected().is_some()
+                    {
                         self.search()?;
                     }
                 }
@@ -613,11 +670,35 @@ impl Component for AddComponent {
             };
             return Ok(None);
         }
-        if self.state == State::VersionInput {
+        if self.state == State::ChangeLoader {
             match key.code {
                 KeyCode::Tab | KeyCode::Esc => self.state = State::Normal,
                 KeyCode::Enter => {
                     if !self.version_input.value().is_empty() && !self.input.value().is_empty() {
+                        self.search()?;
+                        return Ok(None);
+                    }
+
+                    self.state = State::Search;
+                }
+                KeyCode::Char('h') | KeyCode::Left => self.loader_list.select_none(),
+                KeyCode::Char('j') | KeyCode::Down => self.loader_list.select_next(),
+                KeyCode::Char('k') | KeyCode::Up => self.loader_list.select_previous(),
+                KeyCode::Char('g') | KeyCode::Home => self.loader_list.select_first(),
+                KeyCode::Char('G') | KeyCode::End => self.loader_list.select_last(),
+                KeyCode::Char('q') => return Ok(Some(Action::Quit)),
+                _ => {}
+            }
+            return Ok(None);
+        }
+        if self.state == State::VersionInput {
+            match key.code {
+                KeyCode::Tab | KeyCode::Esc => self.state = State::Normal,
+                KeyCode::Enter => {
+                    if !self.version_input.value().is_empty()
+                        && !self.input.value().is_empty()
+                        && self.loader_list.state.selected().is_some()
+                    {
                         self.search()?;
                         return Ok(None);
                     }
@@ -744,6 +825,7 @@ impl Component for AddComponent {
             KeyCode::Char('/') => self.toggle_state(),
             KeyCode::Char('l') => self.state = State::SearchResultList,
             KeyCode::Char('J') | KeyCode::Char('s') => self.state = State::SelectedList,
+            KeyCode::Char('L') => self.state = State::ChangeLoader,
             KeyCode::Esc => {
                 self.command_tx.clone().unwrap().send(Action::ClearScreen)?;
                 return Ok(Some(Action::Mode(Mode::Home)));
@@ -840,6 +922,7 @@ impl Component for AddComponent {
         ])
         .areas(left);
         let [lb_1, lb_2] = Layout::vertical(Constraint::from_percentages([50, 50])).areas(lb);
+        let [lm1, lm2] = Layout::horizontal(Constraint::from_percentages([70, 30])).areas(lm);
         let top_text = Paragraph::new("Add Mods")
             .bold()
             .block(
@@ -882,6 +965,7 @@ impl Component for AddComponent {
             let val = match source {
                 Source::Modrinth => "MR",
                 Source::Github => "GH",
+                Source::CurseForge => "CF",
             };
             ListItem::new(val.to_string()).style(Style::default().fg(Color::Yellow))
         }))
@@ -891,6 +975,29 @@ impl Component for AddComponent {
                 .border_type(BorderType::Rounded)
                 .title_top("Source")
                 .border_style(source_list_style),
+        );
+        let loader_list_style = match self.state {
+            State::ChangeLoader => Color::Yellow.into(),
+            _ => Style::default(),
+        };
+        let loader_list = List::new(self.loader_list.list_items.iter().map(|loader| {
+            let val = match loader {
+                ModLoader::Forge => "Forge",
+                ModLoader::Fabric => "Fabric",
+                ModLoader::Quilt => "Quilt",
+                ModLoader::NeoForge => "NeoForge",
+                ModLoader::Cauldron => "Cauldron",
+                ModLoader::LiteLoader => "LiteLoader",
+                ModLoader::Any => "Any",
+            };
+            ListItem::new(val.to_string()).style(Style::default().fg(Color::Yellow))
+        }))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title_top("Loader")
+                .border_style(loader_list_style),
         );
         let [right_top, right_bottom] =
             Layout::vertical(Constraint::from_percentages([70, 30])).areas(right);
@@ -926,6 +1033,7 @@ impl Component for AddComponent {
             frame.render_widget(input, ltl);
         }
         frame.render_stateful_widget(source_list, ltr, &mut self.source_list.state);
+        frame.render_stateful_widget(loader_list, lm2, &mut self.loader_list.state);
         frame.render_stateful_widget(
             search_results_list,
             right_top,
@@ -935,7 +1043,7 @@ impl Component for AddComponent {
         frame.render_stateful_widget(selected_list, lb_1, &mut self.selected_list_state);
         frame.render_stateful_widget(list, lb_2, &mut self.list.state);
         frame.render_widget(top_text, top);
-        frame.render_widget(version_input, lm);
+        frame.render_widget(version_input, lm1);
 
         Ok(())
     }

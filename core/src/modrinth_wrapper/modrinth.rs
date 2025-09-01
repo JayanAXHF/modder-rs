@@ -2,13 +2,15 @@
 use crate::cli::Source;
 use crate::gh_releases::{self, GHReleasesAPI};
 use crate::metadata::{Error as MetadataError, Metadata};
-use crate::{Link, calc_sha512};
+use crate::{Link, ModLoader, calc_sha512};
 use clap::ValueEnum;
+use color_eyre::eyre::{self, ContextCompat, bail, eyre};
 use colored::Colorize;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt::Display, fs};
 use tracing::{self, debug, error, info, warn};
@@ -24,9 +26,15 @@ pub enum Error {
     // TODO: Move this to `lib.rs`
     #[error("Metadata error: {0}")]
     MetadataErr(#[from] MetadataError),
+    #[error("Unknown error: {0}")]
+    UnknownError(#[from] color_eyre::eyre::ErrReport),
+    #[error("Error getting mod from github: {0}")]
+    GithubError(#[from] gh_releases::Error),
+    #[error("Error writing file: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = color_eyre::Result<T, Error>;
 
 const GRAY: (u8, u8, u8) = (128, 128, 128);
 
@@ -183,14 +191,16 @@ impl Modrinth {
         version: &str,
         mod_loader: &str,
     ) -> Result<Vec<VersionData>> {
+        debug!(mod_name = ?mod_name, version = ?version, mod_loader = ?mod_loader);
         let versions = reqwest::get(format!(
         "https://api.modrinth.com/v2/project/{}/version?game_versions=[\"{}\"]&loaders=[\"{}\"]",
-        mod_name, version, mod_loader
+        mod_name, version, mod_loader.to_lowercase()
     ))
     .await
     .expect("Failed to get versions");
 
         let versions = versions.text().await.unwrap();
+        debug!(versions = ?versions);
         serde_json::from_str(&versions).map_err(Error::SerdeErr)
     }
     pub async fn search_mods(query: &str, limit: u16, offset: u16) -> ProjectSearch {
@@ -203,8 +213,12 @@ impl Modrinth {
         parsed
     }
 
-    pub async fn get_version(mod_name: &str, version: &str) -> Option<VersionData> {
-        let versions = Modrinth::get_version_data(mod_name, version, "fabric").await;
+    pub async fn get_version(
+        mod_name: &str,
+        version: &str,
+        loader: ModLoader,
+    ) -> Option<VersionData> {
+        let versions = Modrinth::get_version_data(mod_name, version, &loader.to_string()).await;
         if versions.is_err() {
             error!(
                 "Error parsing versions for mod {}: {}. This may mean that this mod is not available for this version",
@@ -266,12 +280,15 @@ impl Modrinth {
         version: &str,
         prev_deps: Arc<Mutex<Vec<Dependency>>>,
         prefix: &str,
+        loader: ModLoader,
     ) {
-        let mod_ = Modrinth::get_version(&mod_.slug, version).await;
+        let mod_ = Modrinth::get_version(&mod_.slug, version, loader.clone()).await;
         let mut prev_deps = prev_deps.lock().await;
         let mut handles = Vec::new();
+
         if let Some(mod_) = mod_ {
             for dependency in mod_.dependencies.unwrap() {
+                let loader = loader.clone();
                 if prev_deps.contains(&dependency) {
                     info!(
                         "Skipping dependency {}",
@@ -281,7 +298,7 @@ impl Modrinth {
                 }
                 prev_deps.push(dependency.clone());
                 let dependency =
-                    Modrinth::get_version(&dependency.project_id.unwrap(), version).await;
+                    Modrinth::get_version(&dependency.project_id.unwrap(), version, loader).await;
 
                 if let Some(dependency) = dependency {
                     info!(
@@ -473,84 +490,43 @@ impl VersionData {
 }
 
 pub async fn update_from_file(
-    github: &mut GHReleasesAPI,
     filename: &str,
     new_version: &str,
-    del_prev: bool,
     prefix: &str,
-) {
+    loader: Option<ModLoader>,
+) -> Result<()> {
     let hash = calc_sha512(filename);
-    let version_data = VersionData::from_hash(hash).await;
-
-    if version_data.is_err() {
-        let metadata = Metadata::get_all_metadata(PathBuf::from(filename));
-        if metadata.is_err() {
-            error!("Could not find metadata for {}", filename);
-            error!(err=?metadata.err().unwrap());
-            return;
+    let version_data = VersionData::from_hash(hash).await?;
+    let loader = if let Some(loader) = loader {
+        loader
+    } else {
+        match version_data
+            .loaders
+            .unwrap_or(vec!["fabric".to_string()])
+            .first()
+            .context("No loader found")?
+            .as_str()
+        {
+            "fabric" => ModLoader::Fabric,
+            "forge" => ModLoader::Forge,
+            "quilt" => ModLoader::Quilt,
+            "neoforge" => ModLoader::NeoForge,
+            "cauldron" => ModLoader::Cauldron,
+            "liteloader" => ModLoader::LiteLoader,
+            _ => ModLoader::Any,
         }
-        let metadata = metadata.unwrap();
-        let source: Result<Source> = match metadata.get("source") {
-            Some(source) => Ok(Source::from_str(source, true).unwrap()),
-            None => Err(Error::MetadataErr(MetadataError::NoKeyFound)),
-        };
+    };
 
-        if let Ok(Source::Github) = source {
-            info!("Checking Github for mod");
-            let repo = metadata.get("repo");
-            if repo.is_none() {
-                error!("Could not find repo for {}", filename);
-                return;
-            }
-            let repo = repo.unwrap();
-            let split = repo.split("/").collect_vec();
-            let update = github.get_releases(split[0].trim(), split[1]).await;
+    let new_version_data =
+        Modrinth::get_version(&version_data.project_id, new_version, loader).await;
 
-            if update.is_err() {
-                error!("Could not find update for {}", filename);
-                error!(err=?update.err().unwrap());
-                return;
-            }
-            let update = update.unwrap();
-            let mod_ = gh_releases::get_mod_from_release(&update, "fabric", new_version).await;
-            if mod_.is_err() {
-                error!("Could not find mod {} for {}", new_version, filename);
-                error!(err=?mod_.err().unwrap());
-                return;
-            }
-            let mod_ = mod_.unwrap();
-            mod_.download(format!("{}/{}", prefix, mod_.name).into(), split.join("/"))
-                .await
-                .unwrap();
-            if del_prev && filename.split('/').last().unwrap() != mod_.name {
-                fs::remove_file(filename).unwrap();
-            }
-            return;
-        } else {
-            error!(ver_err=?source.err());
-        }
-        error!("Could not find version {} for {}", new_version, filename);
-        return;
-    }
-    info!("Checking Modrinth for version");
-    let version_data = version_data.unwrap();
-    let new_version_data = Modrinth::get_version(&version_data.project_id, new_version).await;
+    let Some(new_version_data) = new_version_data else {
+        return Err(Error::NoVersionsFound(filename.to_string()));
+    };
 
-    if new_version_data.is_none() {
-        let source = Metadata::get_source(PathBuf::from(filename));
-        if let Ok(Source::Github) = source {
-            warn!("Mod is from github");
-        }
-        error!("Could not find version {} for {}", new_version, filename);
-        return;
-    }
-    let new_version_data = new_version_data.unwrap();
     download_file(&new_version_data.clone().files.unwrap()[0], prefix).await;
-    if del_prev
-        && filename.split('/').last().unwrap() != new_version_data.files.unwrap()[0].filename
-    {
-        fs::remove_file(filename).unwrap();
-    }
+
+    Ok(())
 }
 
 pub async fn download_file(file: &File, prefix: &str) {

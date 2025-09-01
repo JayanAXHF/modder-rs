@@ -154,6 +154,7 @@ impl Component for Home {
             Constraint::Length(7), // top and bottom border + content
         );
         frame.render_stateful_widget(list, center_area, &mut self.list.state);
+
         Ok(())
     }
 }

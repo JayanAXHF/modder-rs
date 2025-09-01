@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::{fmt::Display, path::PathBuf};
+use strum::EnumIter;
+
+use crate::ModLoader;
 
 /// Modder is a tool for managing mods for Minecraft.
 /// It can add mods from Modrinth and Github.
@@ -39,6 +42,12 @@ pub enum Commands {
         /// Github token for any mods nested in a github repo.
         #[arg(short, long)]
         token: Option<String>,
+        /// Mod Loader
+        #[arg(short, long, default_value_t= ModLoader::Fabric)]
+        loader: ModLoader,
+        /// The directory to update mods in
+        #[arg( default_value_os_t = PathBuf::from("./"))]
+        dir: PathBuf,
     },
     /// Bulk-update a directory of mods to the specified version
     #[command(arg_required_else_help = true)]
@@ -54,6 +63,14 @@ pub enum Commands {
         /// Github token for any mods nested in a github repo.
         #[arg(short, long)]
         token: Option<String>,
+        /// Where to download the mod from
+        #[arg(short, long)]
+        source: Option<Source>,
+        /// Don't check other sources if the mod is not found on <source>
+        #[arg(long, default_value_t = true)]
+        other_sources: bool,
+        #[arg(short, long)]
+        loader: Option<ModLoader>,
     },
     /// Quickly add mods from a curated list to the supplied directory (defaults to current directory)
     QuickAdd {
@@ -63,15 +80,9 @@ pub enum Commands {
         /// Find top `limit` mods from Modrinth
         #[arg(short, long, default_value_t = 100)]
         limit: u16,
-    },
-    /// All the other options, just run in the minecraft directory
-    InPlace {
-        /// The game version to add this mod for
-        #[arg(short, long)]
-        version: Option<String>,
-        /// Passed down to the quick add command
-        #[arg(short, long, default_value_t = 100)]
-        limit: u16,
+        /// The mod loader to use
+        #[arg(short, long, default_value_t = ModLoader::Fabric)]
+        loader: ModLoader,
     },
     /// Toggle a mod in the supplied directory (defaults to current directory)
     Toggle {
@@ -99,7 +110,6 @@ impl Display for Commands {
             Commands::QuickAdd { .. } => "Quick Add".to_string(),
             Commands::Update { .. } => "Update".to_string(),
             Commands::Add { .. } => "Add".to_string(),
-            Commands::InPlace { .. } => "Edit Minecraft Directory".to_string(),
             Commands::Toggle { .. } => "Toggle".to_string(),
             Commands::List { .. } => "List".to_string(),
         };
@@ -107,11 +117,12 @@ impl Display for Commands {
     }
 }
 
-#[derive(Debug, Clone, clap::ValueEnum, PartialEq, Default, Hash, Eq)]
+#[derive(Debug, Clone, clap::ValueEnum, PartialEq, Default, Hash, Eq, EnumIter)]
 pub enum Source {
     #[default]
     Modrinth,
     Github,
+    CurseForge,
 }
 
 impl Display for Source {
@@ -119,6 +130,7 @@ impl Display for Source {
         let text = match self {
             Source::Modrinth => "modrinth".to_string(),
             Source::Github => "github".to_string(),
+            Source::CurseForge => "curseforge".to_string(),
         };
         write!(f, "{}", text)
     }

@@ -1,12 +1,10 @@
 use color_eyre::eyre::Result;
 mod actions;
-pub mod curseforge_wrapper;
-pub mod modrinth_wrapper;
 use clap::Parser;
 use cli::*;
 use futures::lock::Mutex;
 use modder::*;
-use std::{collections::HashSet, process, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
@@ -40,6 +38,10 @@ async fn main() -> Result<()> {
         .with_env_filter(env_filter)
         .compact()
         .init();
-    actions::run(cli).await;
+    let res = actions::run(cli).await;
+    if let Err(err) = res {
+        error!("{err}");
+        return Err(err);
+    }
     Ok(())
 }
