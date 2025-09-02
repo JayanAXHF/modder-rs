@@ -75,6 +75,7 @@ pub fn calc_sha512(filename: &str) -> String {
     hex::encode(hash)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_dir(
     github: &mut GHReleasesAPI,
     curseforge: CurseForgeAPI,
@@ -116,7 +117,6 @@ pub async fn update_dir(
                             (*github).clone(),
                             path.to_str().unwrap(),
                             &new_version,
-                            del_prev,
                             &prefix,
                         )
                         .await
@@ -155,7 +155,6 @@ pub async fn update_dir(
                                     (*github).clone(),
                                     path.to_str().unwrap(),
                                     &new_version,
-                                    del_prev,
                                     &prefix,
                                 )
                                 .await
@@ -308,7 +307,6 @@ pub async fn update_file_github(
     github: GHReleasesAPI,
     filename: &str,
     new_version: &str,
-    del_prev: bool,
     prefix: &str,
 ) -> Result<()> {
     let metadata = Metadata::get_all_metadata(PathBuf::from(filename));

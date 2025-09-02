@@ -281,13 +281,12 @@ impl Component for ToggleComponent {
                     Style::default().add_modifier(Modifier::DIM),
                 );
                 let top_line = Line::from(vec![name_span, version_span]);
-                let url = if item.source == Source::Modrinth {
+
+                let new_link = if item.source == Source::Modrinth {
                     format!("https://modrinth.com/mod/{}", item.project_id)
                 } else {
                     format!("https://github.com/{}", item.project_id)
                 };
-
-                let new_link = Link::new(url.clone(), url);
 
                 let lines = vec![
                     top_line,

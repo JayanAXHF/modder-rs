@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 use modder::{
     Link, calc_sha512,
     cli::Source,
-    curseforge_wrapper::{API_KEY, CurseForgeAPI, CurseForgeMod},
+    curseforge_wrapper::{API_KEY, CurseForgeAPI},
     metadata::Metadata,
     modrinth_wrapper::modrinth::{GetProject, VersionData},
 };
@@ -244,12 +244,12 @@ impl Component for ListComponent {
                     Style::default().add_modifier(Modifier::DIM),
                 );
                 let top_line = Line::from(vec![name_span, version_span]);
-                let url = if item.source == Source::Modrinth {
+
+                let new_link = if item.source == Source::Modrinth {
                     format!("https://modrinth.com/mod/{}", item.project_id)
                 } else {
                     format!("https://github.com/{}", item.project_id)
                 };
-                let new_link = Link::new(url.clone(), url);
 
                 let lines = vec![
                     top_line,

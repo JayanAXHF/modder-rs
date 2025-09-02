@@ -2,10 +2,9 @@
 use crate::gh_releases::{self};
 use crate::metadata::Error as MetadataError;
 use crate::{Link, ModLoader, calc_sha512};
-use color_eyre::eyre::{ContextCompat};
+use color_eyre::eyre::ContextCompat;
 use colored::Colorize;
 use futures::lock::Mutex;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{fmt::Display, fs};
@@ -214,6 +213,7 @@ impl Modrinth {
         version: &str,
         loader: ModLoader,
     ) -> Option<VersionData> {
+        #[allow(clippy::unnecessary_to_owned)]
         let versions = Modrinth::get_version_data(mod_name, version, &loader.to_string()).await;
         if versions.is_err() {
             error!(

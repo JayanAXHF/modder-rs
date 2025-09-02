@@ -10,6 +10,8 @@ A Terminal User Interface for Modder-rs, a command-line Minecraft mod manager.
 *   Search for mods
 *   View mod details
 
+![How it Looks](https://vhs.charm.sh/vhs-aqUn5U8TEFwtZNIA48IDR.gif)
+
 ## Installation
 
 1.  Clone the repository:
