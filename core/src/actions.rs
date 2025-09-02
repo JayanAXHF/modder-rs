@@ -265,13 +265,12 @@ pub async fn run(cli: Cli) -> color_eyre::Result<()> {
                 Source::CurseForge => {
                     let api = CurseForgeAPI::new(API_KEY.to_string());
                     let dependencies = Arc::new(Mutex::new(Vec::new()));
-                    let mods = api.search_mods(&version, loader, &mod_).await.unwrap();
+                    let mods = api.search_mods(&version, loader, &mod_, 30).await.unwrap();
                     let prompt = inquire::MultiSelect::new("Select mods", mods);
                     let selected = prompt.prompt().unwrap();
                     let mut handles = Vec::new();
                     let dir = Arc::new(dir.clone());
                     for mod_ in selected {
-                        dbg!(&mod_.latest_files[0].file_fingerprint);
                         let dependencies = Arc::clone(&dependencies);
                         let version = version.clone();
                         let api = api.clone();

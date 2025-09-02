@@ -1,4 +1,3 @@
-//!WARN: ON HOLD for now because this API is tom-fucking-beaurocratic shit
 mod file_utils;
 mod hash;
 mod structs;
@@ -181,14 +180,12 @@ impl CurseForgeAPI {
         fs::write(&path, file_data.bytes().await?)?;
         Ok(())
     }
-    pub async fn get_mod_from_file(&self, file: PathBuf) -> Result<Mod> {
+    pub async fn get_version_from_file(&self, file: PathBuf) -> Result<File> {
         let f = file.clone();
         let f_name = f.file_name().unwrap().to_str().unwrap();
         let contents = get_jar_contents(&file)?;
         let fingerprint = MurmurHash2::hash(&contents);
-        dbg!(&fingerprint);
         let url = format!("{BASE_URL}/fingerprints/{GAME_ID}");
-        dbg!(&url);
         let mut headers = HEADERS.clone();
         headers.insert(
             HeaderName::from_static("content-type"),
@@ -208,8 +205,43 @@ impl CurseForgeAPI {
             .await?;
         let response = response.error_for_status()?;
         let body = response.text().await?;
-        dbg!(&body);
-        let res: FingerprintResponse = serde_json::from_str(&body)?;
+
+        let res: FingerprintResponseRoot = serde_json::from_str(&body)?;
+        let res = res.data;
+        if res.exact_matches.is_empty() {
+            return Err(CurseForgeError::NoFingerprintFound(f_name.to_string()));
+        }
+        let exact_match = res.exact_matches.first().unwrap();
+        let file = exact_match.file.clone();
+        Ok(file)
+    }
+    pub async fn get_mod_from_file(&self, file: PathBuf) -> Result<Mod> {
+        let f = file.clone();
+        let f_name = f.file_name().unwrap().to_str().unwrap();
+        let contents = get_jar_contents(&file)?;
+        let fingerprint = MurmurHash2::hash(&contents);
+        let url = format!("{BASE_URL}/fingerprints/{GAME_ID}");
+        let mut headers = HEADERS.clone();
+        headers.insert(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/json"),
+        );
+        let body = json!({
+        "fingerprints": [
+            fingerprint
+        ]});
+        let body = serde_json::to_string(&body)?;
+        let response = self
+            .client
+            .request(Method::POST, Url::parse(&url)?)
+            .headers(headers)
+            .body(body)
+            .send()
+            .await?;
+        let response = response.error_for_status()?;
+        let body = response.text().await?;
+        let res: FingerprintResponseRoot = serde_json::from_str(&body)?;
+        let res = res.data;
         if res.exact_matches.is_empty() {
             return Err(CurseForgeError::NoFingerprintFound(f_name.to_string()));
         }
@@ -254,7 +286,10 @@ mod tests {
     async fn test_search_mods() {
         let api = CurseForgeAPI::new(API_KEY.to_string());
         let loader = ModLoader::Fabric;
-        let mods = api.search_mods("1.21.4", loader, "Carpet").await.unwrap();
+        let mods = api
+            .search_mods("1.21.4", loader, "Carpet", 10)
+            .await
+            .unwrap();
         assert_eq!(!mods.is_empty(), true);
     }
     #[tokio::test]
@@ -281,7 +316,7 @@ mod tests {
         let loader = ModLoader::Fabric;
         let v = "1.21.4";
         let api = CurseForgeAPI::new(API_KEY.to_string());
-        let mods = api.search_mods(v, loader, search).await.unwrap();
+        let mods = api.search_mods(v, loader, search, 10).await.unwrap();
         println!("{:#?}", mods);
         let prompt = inquire::MultiSelect::new("Select mods", mods);
         let selected = prompt.prompt().unwrap();
@@ -310,10 +345,13 @@ mod tests {
     async fn test_fingerprint_specific_jar() {
         color_eyre::install().unwrap();
         let api = CurseForgeAPI::new(API_KEY.to_string());
-        let jar_path =
-            PathBuf::from("/Users/jayansunil/Downloads/fabric-carpet-1.21.7-1.4.177+v250630.jar");
+        let jar_path = PathBuf::from(
+            "/Users/jayansunil/Dev/rust/modder/tui/test/createaddition-1.19.2-1.2.3.jar",
+        );
         let fingerprint = MurmurHash2::hash(&get_jar_contents(&jar_path).unwrap());
         dbg!(&fingerprint);
         // The fingerprint will be debug-printed by dbg!(&fingerprint) inside get_mod_from_file
+        let mod_ = api.get_mod_from_file(jar_path).await.unwrap();
+        assert_eq!(mod_.name, "CreateAddition");
     }
 }

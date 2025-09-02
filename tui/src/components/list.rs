@@ -5,6 +5,7 @@ use crossterm::event::KeyCode;
 use modder::{
     Link, calc_sha512,
     cli::Source,
+    curseforge_wrapper::{API_KEY, CurseForgeAPI, CurseForgeMod},
     metadata::Metadata,
     modrinth_wrapper::modrinth::{GetProject, VersionData},
 };
@@ -12,7 +13,7 @@ use ratatui::{prelude::*, widgets::*};
 use std::{fs, path::PathBuf};
 use style::palette::tailwind::SLATE;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::error;
+use tracing::{debug, error};
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
@@ -399,28 +400,52 @@ async fn get_mods(dir: PathBuf) -> Vec<ModListItem> {
             let hash = calc_sha512(&path_str);
             let version_data = VersionData::from_hash(hash).await;
             if version_data.is_err() {
-                let metadata = Metadata::get_all_metadata(path_str.clone().into());
-                if metadata.is_err() {
-                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
-                    return None;
+                debug!(path = ?path);
+                let cf = CurseForgeAPI::new(API_KEY.to_string());
+                let mod_ = cf.get_mod_from_file(path.clone()).await;
+                let file = cf.get_version_from_file(path.clone()).await;
+                if mod_.is_err() || file.is_err() {
+                    debug!(path = ?path);
+                    let metadata = Metadata::get_all_metadata(path_str.clone().into());
+                    if metadata.is_err() {
+                        error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                        return None;
+                    }
+                    let metadata = metadata.unwrap();
+                    let source = metadata.get("source").unwrap();
+                    if source.is_empty() {
+                        error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                        return None;
+                    }
+                    let repo = metadata.get("repo").unwrap();
+                    let repo_name = repo.split('/').last().unwrap();
+                    let game_version = regex.unwrap().find(&path_str).unwrap().as_str().to_string();
+                    let out = ModListItem {
+                        name: repo_name.to_string(),
+                        source: Source::Github,
+                        version: game_version,
+                        game_version: None,
+                        category: None,
+                        version_type: "GITHUB".to_string(),
+                        project_id: repo.to_string(),
+                    };
+                    return Some(out);
                 }
-                let metadata = metadata.unwrap();
-                let source = metadata.get("source").unwrap();
-                if source.is_empty() {
-                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                let Ok(mod_) = mod_ else {
                     return None;
-                }
-                let repo = metadata.get("repo").unwrap();
-                let repo_name = repo.split('/').last().unwrap();
-                let game_version = regex.unwrap().find(&path_str).unwrap().as_str().to_string();
+                };
+                let Ok(file) = file else {
+                    return None;
+                };
+                debug!(mod_curseforge = ?mod_);
                 let out = ModListItem {
-                    name: repo_name.to_string(),
-                    source: Source::Github,
-                    version: game_version,
-                    game_version: None,
-                    category: None,
-                    version_type: "GITHUB".to_string(),
-                    project_id: repo.to_string(),
+                    name: mod_.name,
+                    source: Source::CurseForge,
+                    version: file.id.to_string(),
+                    game_version: Some(file.game_versions.join(", ")),
+                    category: Some(mod_.categories.iter().map(|c| c.name.clone()).collect()),
+                    version_type: "CF".to_string(),
+                    project_id: mod_.slug,
                 };
                 return Some(out);
             }

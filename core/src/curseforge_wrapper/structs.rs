@@ -215,6 +215,12 @@ pub struct ModBuilder {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct FingerprintResponseRoot {
+    pub data: FingerprintResponse,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct FingerprintResponse {
     #[serde(default)]
     pub is_cache_built: bool,
@@ -223,7 +229,7 @@ pub struct FingerprintResponse {
     pub partial_matches: Vec<PartialMatch>,
     pub partial_match_fingerprints: std::collections::HashMap<String, Vec<u32>>,
     pub installed_fingerprints: Vec<u32>,
-    pub unmatched_fingerprints: Vec<u32>,
+    pub unmatched_fingerprints: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

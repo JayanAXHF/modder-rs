@@ -6,7 +6,7 @@ use futures::{executor::block_on, lock::Mutex};
 use modder::{
     MOD_LOADERS, ModLoader, calc_sha512,
     cli::{SOURCES, Source},
-    curseforge_wrapper::{CurseForgeAPI, CurseForgeError},
+    curseforge_wrapper::{API_KEY, CurseForgeAPI},
     gh_releases::{GHReleasesAPI, get_mod_from_release},
     metadata::Metadata,
     modrinth_wrapper::modrinth::{self, GetProject, Mod, Modrinth, VersionData},
@@ -1304,23 +1304,40 @@ async fn get_mods(dir: PathBuf) -> Vec<CurrentModsListItem> {
             let enabled = !path_str.contains("disabled");
             let version_data = VersionData::from_hash(hash).await;
             if version_data.is_err() {
-                let metadata = Metadata::get_all_metadata(path_str.clone().into());
-                if metadata.is_err() {
-                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
-                    return None;
+                debug!(path = ?path);
+                let cf = CurseForgeAPI::new(API_KEY.to_string());
+                let mod_ = cf.get_mod_from_file(path.clone()).await;
+                if mod_.is_err() {
+                    debug!(path = ?path);
+                    let metadata = Metadata::get_all_metadata(path_str.clone().into());
+                    if metadata.is_err() {
+                        error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                        return None;
+                    }
+                    let metadata = metadata.unwrap();
+                    let source = metadata.get("source").unwrap();
+                    if source.is_empty() {
+                        error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                        return None;
+                    }
+                    let repo = metadata.get("repo").unwrap();
+                    let repo_name = repo.split('/').last().unwrap();
+                    let out = CurrentModsListItem {
+                        name: repo_name.to_string(),
+                        version_type: "GITHUB".to_string(),
+                        project_id: repo.to_string(),
+                        enabled,
+                    };
+                    return Some(out);
                 }
-                let metadata = metadata.unwrap();
-                let source = metadata.get("source").unwrap();
-                if source.is_empty() {
-                    error!(version_data = ?version_data, "Failed to get version data for {}", path_str);
+                let Ok(mod_) = mod_ else {
                     return None;
-                }
-                let repo = metadata.get("repo").unwrap();
-                let repo_name = repo.split('/').last().unwrap();
+                };
+                debug!(mod_curseforge = ?mod_);
                 let out = CurrentModsListItem {
-                    name: repo_name.to_string(),
-                    version_type: "GITHUB".to_string(),
-                    project_id: repo_name.to_string(),
+                    name: mod_.name,
+                    version_type: "RELEASE".to_string(),
+                    project_id: mod_.slug,
                     enabled,
                 };
                 return Some(out);

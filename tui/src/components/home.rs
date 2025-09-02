@@ -78,7 +78,7 @@ impl MenuList {
 impl Home {
     pub fn new() -> Self {
         Home {
-            list: MenuList::from_iter(vec![Mode::Add, Mode::QuickAdd, Mode::Toggle, Mode::List]),
+            list: MenuList::from_iter(vec![Mode::Add, Mode::Toggle, Mode::List]),
             mode: Mode::Home,
             enabled: true,
             ..Default::default()

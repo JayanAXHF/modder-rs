@@ -7,7 +7,7 @@ pub mod modrinth_wrapper;
 use clap::ValueEnum;
 use cli::Source;
 use color_eyre::Result;
-use color_eyre::eyre::{ContextCompat, bail};
+use color_eyre::eyre::bail;
 use curseforge_wrapper::{CurseForgeAPI, CurseForgeMod};
 use gh_releases::{Error, GHReleasesAPI};
 use hmac_sha512::Hash;

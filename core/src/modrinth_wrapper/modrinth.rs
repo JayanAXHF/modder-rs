@@ -1,19 +1,15 @@
 #![allow(dead_code)]
-use crate::cli::Source;
-use crate::gh_releases::{self, GHReleasesAPI};
-use crate::metadata::{Error as MetadataError, Metadata};
+use crate::gh_releases::{self};
+use crate::metadata::Error as MetadataError;
 use crate::{Link, ModLoader, calc_sha512};
-use clap::ValueEnum;
-use color_eyre::eyre::{self, ContextCompat, bail, eyre};
+use color_eyre::eyre::{ContextCompat};
 use colored::Colorize;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::{fmt::Display, fs};
-use tracing::{self, debug, error, info, warn};
+use tracing::{self, debug, error, info};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
