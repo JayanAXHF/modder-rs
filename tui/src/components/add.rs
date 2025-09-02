@@ -2,10 +2,11 @@ use super::Component;
 use crate::{action::Action, app::Mode, config::Config};
 use color_eyre::Result;
 use crossterm::event::KeyCode;
-use futures::lock::Mutex;
+use futures::{executor::block_on, lock::Mutex};
 use modder::{
     MOD_LOADERS, ModLoader, calc_sha512,
-    cli::Source,
+    cli::{SOURCES, Source},
+    curseforge_wrapper::{CurseForgeAPI, CurseForgeError},
     gh_releases::{GHReleasesAPI, get_mod_from_release},
     metadata::Metadata,
     modrinth_wrapper::modrinth::{self, GetProject, Mod, Modrinth, VersionData},
@@ -19,7 +20,6 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use strum::IntoEnumIterator;
 use style::palette::tailwind::SLATE;
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::UnboundedSender;
@@ -57,6 +57,7 @@ struct SourceList {
 enum SearchResult {
     ModrinthMod(ModrinthAddListItem),
     Github(GithubAddListItem),
+    CurseForgeMod(CurseForgeAddListItem),
 }
 impl Default for SearchResult {
     fn default() -> Self {
@@ -107,6 +108,20 @@ pub struct GithubAddListItem {
     selected: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct CurseForgeAddListItem {
+    name: String,
+    source: Source,
+    author: String,
+    id: u32,
+    game_version: String,
+    version_id: u32,
+    selected: bool,
+    slug: String,
+    thumbs_up_count: u32,
+    loader: ModLoader,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LoaderList {
     list_items: Vec<ModLoader>,
@@ -146,12 +161,14 @@ impl SearchResult {
         match self {
             SearchResult::ModrinthMod(mod_) => mod_.selected,
             SearchResult::Github(github) => github.selected,
+            SearchResult::CurseForgeMod(curseforge) => curseforge.selected,
         }
     }
     fn toggle_selected(&mut self) {
         match self {
             SearchResult::ModrinthMod(mod_) => mod_.selected = !mod_.selected,
             SearchResult::Github(github) => github.selected = !github.selected,
+            SearchResult::CurseForgeMod(curseforge) => curseforge.selected = !curseforge.selected,
         }
     }
 }
@@ -196,6 +213,11 @@ impl AddListItem for GithubAddListItem {
         self.name.clone()
     }
 }
+impl AddListItem for CurseForgeAddListItem {
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+}
 impl Downloadable for GithubAddListItem {
     async fn download(&self, dir: PathBuf) -> Result<()> {
         let gh = GHReleasesAPI::new();
@@ -223,6 +245,21 @@ impl Downloadable for GithubAddListItem {
                 "Could not find version {} for {}: {version_data:?}",
                 &self.game_version, &self.name
             );
+        }
+        Ok(())
+    }
+}
+
+impl Downloadable for CurseForgeAddListItem {
+    async fn download(&self, dir: PathBuf) -> Result<()> {
+        let cf = CurseForgeAPI::new(env!("CURSEFORGE_API_KEY").to_string());
+        let files = cf
+            .get_mod_files(self.id, &self.game_version, self.loader.clone())
+            .await?;
+        let file_id = files[0].id;
+        let download_res = cf.download_mod(self.id, file_id, dir).await;
+        if download_res.is_err() {
+            return Err(download_res.err().unwrap().into());
         }
         Ok(())
     }
@@ -344,6 +381,10 @@ impl AddList {
                 github.selected = !github.selected;
                 self.list_items[selected] = SearchResult::Github(github.clone());
             }
+            SearchResult::CurseForgeMod(mut curseforge) => {
+                curseforge.selected = !curseforge.selected;
+                self.list_items[selected] = SearchResult::CurseForgeMod(curseforge.clone());
+            }
         }
     }
 }
@@ -375,7 +416,7 @@ impl AddComponent {
         let items = tokio::spawn(async move { get_mods(dir_clone.clone()).await }).await;
         let items = items.unwrap_or(Vec::new());
 
-        let source_list = vec![Source::Modrinth, Source::Github];
+        let source_list = SOURCES.clone();
         let loader_list = MOD_LOADERS.clone();
         AddComponent {
             list: CurrentModsList::from_iter(items),
@@ -487,8 +528,57 @@ impl AddComponent {
                             Vec::new()
                         }
                     }
+                    Source::CurseForge => {
+                        let version = self.version_input.value();
+                        let loader_idx = self.loader_list.state.selected().unwrap_or_default();
+                        let search = self.input.value();
+                        let loader = self.loader_list.list_items[loader_idx].clone();
+                        let cf = CurseForgeAPI::new(env!("CURSEFORGE_API_KEY").to_string());
+                        info!(
+                            "Searching curseforge for {}. This may take a few seconds",
+                            search
+                        );
+                        let search_res =
+                            block_on(cf.search_mods(version, loader.clone(), search, 30))?;
+                        search_res
+                            .into_iter()
+                            .map(|mod_| {
+                                let mut curseforge_add_list_item = CurseForgeAddListItem {
+                                    name: mod_.name,
+                                    source: Source::CurseForge,
+                                    id: mod_.id,
+                                    game_version: version.to_string(),
+                                    version_id: mod_.main_file_id,
+                                    selected: false,
+                                    slug: mod_.slug,
+                                    loader: loader.clone(),
+                                    author: mod_
+                                        .authors
+                                        .iter()
+                                        .map(|author| author.name.clone())
+                                        .collect::<Vec<String>>()
+                                        .join(", "),
+                                    thumbs_up_count: mod_.thumbs_up_count,
+                                };
+
+                                let enabled = if first_search {
+                                    false
+                                } else {
+                                    self.search_result_list.selected_items.contains(
+                                        &SearchResult::CurseForgeMod(
+                                            curseforge_add_list_item.clone(),
+                                        ),
+                                    )
+                                };
+
+                                curseforge_add_list_item.selected = enabled;
+                                SearchResult::CurseForgeMod(curseforge_add_list_item)
+                            })
+                            .collect::<Vec<SearchResult>>()
+                    }
+                    #[allow(unreachable_patterns)]
                     _ => {
-                        todo!()
+                        unreachable!();
                     }
                 }
             }
@@ -591,6 +681,63 @@ impl GithubAddListItem {
                     Style::default().add_modifier(Modifier::DIM),
                 ),
                 Span::styled(self.repo.clone(), Style::default().fg(Color::Gray)),
+            ]),
+        ]
+    }
+}
+
+impl CurseForgeAddListItem {
+    pub fn format(&self) -> Vec<Line<'static>> {
+        let selected_indicator = if self.selected {
+            Span::styled("[x] ", Style::default().fg(Color::Green))
+        } else {
+            Span::raw("[ ] ")
+        };
+        let padding = Span::raw("    ");
+        vec![
+            Line::from(vec![
+                selected_indicator,
+                Span::styled(
+                    self.name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::raw("by "),
+                Span::styled(
+                    self.author.clone(),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("(Likes: {})", self.thumbs_up_count),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ]),
+            Line::from(vec![
+                padding.clone(),
+                Span::styled(
+                    "Source: ".to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(self.source.to_string(), Style::default().fg(Color::Blue)),
+                Span::raw("  "),
+                Span::styled(
+                    "Game Version: ".to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(
+                    self.game_version.clone(),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                padding,
+                Span::styled(
+                    "Slug: ".to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+                Span::styled(self.slug.clone(), Style::default().fg(Color::Gray)),
+                Span::raw("\n"),
             ]),
         ]
     }
@@ -784,10 +931,28 @@ impl Component for AddComponent {
                                     }
                                 });
                             }
-                        };
+                            SearchResult::CurseForgeMod(mod_) => {
+                                info!("Downloading {}", mod_.get_name());
+                                tokio::spawn(async move {
+                                    let res = mod_.download(dir).await;
+                                    match res {
+                                        Ok(_) => {
+                                            info!("Downloaded {}", mod_.get_name());
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                "Failed to download {}: {err:?}",
+                                                mod_.get_name()
+                                            );
+                                        }
+                                    }
+                                });
+                            }
+                        }
                     }
                     let dir = self.dir.clone();
                     let items = futures::executor::block_on(async move { get_mods(dir).await });
+                    info!("Finished downloading mods");
                     self.list.list_items = items;
                     self.state = State::Normal;
                 }
@@ -1055,11 +1220,18 @@ impl From<&CurrentModsListItem> for ListItem<'_> {
     }
 }
 
+impl From<&CurseForgeAddListItem> for ListItem<'_> {
+    fn from(value: &CurseForgeAddListItem) -> Self {
+        ListItem::new(value.format())
+    }
+}
+
 impl SearchResult {
     pub fn to_list_item(&self) -> ListItem<'static> {
         match self {
             SearchResult::ModrinthMod(mod_) => ListItem::new(mod_.format()),
             SearchResult::Github(github) => ListItem::new(github.format()),
+            SearchResult::CurseForgeMod(curseforge) => ListItem::new(curseforge.format()),
         }
     }
 }

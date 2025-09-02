@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
-use std::{fmt::Display, path::PathBuf};
-use strum::EnumIter;
+use itertools::Itertools;
+use std::{fmt::Display, path::PathBuf, sync::LazyLock};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::ModLoader;
-
+pub static SOURCES: LazyLock<Vec<Source>> = LazyLock::new(|| Source::iter().collect_vec());
 /// Modder is a tool for managing mods for Minecraft.
 /// It can add mods from Modrinth and Github.
 /// Other features include bulk-updating a directory of mods to a specified version

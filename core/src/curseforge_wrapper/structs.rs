@@ -32,6 +32,13 @@ pub struct Root {
     pub pagination: Option<Pagination>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchRoot {
+    pub data: Vec<File>,
+    pub pagination: Option<Pagination>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Mod {
@@ -251,7 +258,6 @@ pub trait CurseForgeMod {
 
 impl CurseForgeMod for Mod {
     fn get_version_and_loader(&self, game_version: &str) -> Option<FileIndex> {
-        println!("{:#?}", game_version);
         self.latest_files_indexes
             .iter()
             .find(|file_index| file_index.game_version == game_version)

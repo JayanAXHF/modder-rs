@@ -14,6 +14,7 @@ use reqwest::{
 use serde_json::json;
 use std::{fs, path::PathBuf, sync::LazyLock};
 pub use structs::*;
+use tracing::debug;
 use url::Url;
 
 type Result<T> = color_eyre::Result<T, CurseForgeError>;
@@ -68,12 +69,17 @@ impl CurseForgeAPI {
         game_version: &str,
         loader: ModLoader,
         search: &str,
+        page_size: u32,
     ) -> Result<Vec<Mod>> {
         let params = [
             ("gameId", GAME_ID.to_string()),
-            ("gameVersion", game_version.to_string()),
+            ("index", 0.to_string()),
             ("searchFilter", search.to_string()),
-            ("modLoaderType", loader.as_num().to_string()),
+            ("gameVersion", game_version.to_string()),
+            ("pageSize", page_size.to_string()),
+            ("sortField", 6.to_string()),
+            ("gameFlavors[0]", loader.as_num().to_string()),
+            ("sortOrder", "desc".to_string()),
         ];
         let params_str = params
             .iter()
@@ -81,6 +87,7 @@ impl CurseForgeAPI {
             .collect::<Vec<String>>()
             .join("&");
         let url = format!("{}/mods/search?{params_str}", BASE_URL);
+        debug!(url = ?url);
         let headers = HEADERS.clone();
         let response = self
             .client
@@ -90,7 +97,9 @@ impl CurseForgeAPI {
             .await?;
         let response = response.error_for_status()?;
         let body = response.text().await?;
+        debug!(body = ?body);
         let root: Root = serde_json::from_str(&body)?;
+        debug!(root_data = ?root.data);
         Ok(root.data)
     }
     pub async fn get_mods<T>(&self, mod_ids: T) -> Result<Vec<Mod>>
@@ -120,6 +129,35 @@ impl CurseForgeAPI {
         let root: Root = serde_json::from_str(&body)?;
         Ok(root.data)
     }
+    pub async fn get_mod_files(
+        &self,
+        mod_id: u32,
+        game_version: &str,
+        mod_loader: ModLoader,
+    ) -> Result<Vec<File>> {
+        let params = [
+            ("index", 0.to_string()),
+            ("gameVersion", game_version.to_string()),
+            ("pageSize", 1.to_string()),
+            ("modLoaderType", mod_loader.as_num().to_string()),
+        ];
+        let params_str = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<String>>()
+            .join("&");
+        let url = format!("{BASE_URL}/mods/{mod_id}/files?{params_str}");
+        let response = self
+            .client
+            .request(Method::GET, Url::parse(&url)?)
+            .headers(HEADERS.clone())
+            .send()
+            .await?;
+        let response = response.error_for_status()?;
+        let body = response.text().await?;
+        let root = serde_json::from_str::<FileSearchRoot>(&body)?;
+        Ok(root.data)
+    }
     pub async fn download_mod(&self, mod_id: u32, file_id: u32, dir: PathBuf) -> Result<()> {
         let url = format!(
             "{}/mods/{}/files/{}/download-url",
@@ -138,7 +176,6 @@ impl CurseForgeAPI {
         let file_data = reqwest::get(url).await?;
         let file_name = file_data.url().path_segments().unwrap().last().unwrap();
         let file_name = percent_decode(file_name.as_bytes()).decode_utf8_lossy();
-        println!("{}", file_name);
         let path = dir.join(file_name.to_string());
         fs::create_dir_all(path.parent().unwrap())?;
         fs::write(&path, file_data.bytes().await?)?;
@@ -218,7 +255,6 @@ mod tests {
         let api = CurseForgeAPI::new(API_KEY.to_string());
         let loader = ModLoader::Fabric;
         let mods = api.search_mods("1.21.4", loader, "Carpet").await.unwrap();
-        println!("{:#?}", mods);
         assert_eq!(!mods.is_empty(), true);
     }
     #[tokio::test]
