@@ -1,6 +1,6 @@
 # Modder TUI
 
-A Terminal User Interface for Modder-rs, a command-line Minecraft mod manager.
+A Terminal User Interface for modder-rs, a command-line Minecraft mod manager.
 
 ## Features
 
@@ -13,7 +13,11 @@ A Terminal User Interface for Modder-rs, a command-line Minecraft mod manager.
 ![How it Looks](https://vhs.charm.sh/vhs-aqUn5U8TEFwtZNIA48IDR.gif)
 
 ## Installation
-
+### Cargo
+```sh
+cargo install modder_tui --locked
+```
+### Manual
 1.  Clone the repository:
     ```bash
     git clone https://github.com/JayanAXHF/modder-rs.git

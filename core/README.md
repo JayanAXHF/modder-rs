@@ -2,6 +2,12 @@
 
 This crate contains the core business logic for the `modder` command-line tool. It handles interactions with modding APIs, file management, and the implementation of the CLI commands.
 
+## Installation
+
+```sh
+cargo install modder --locked
+```
+
 ## Features
 
 - [x] Bulk-update a directory of mods
