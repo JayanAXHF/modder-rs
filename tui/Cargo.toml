@@ -1,5 +1,5 @@
 [package]
-name = "tui"
+name = "modder_tui"
 version = "0.1.5"
 edition = "2024"
 description = "TUI Wrapper for Modder-rs"

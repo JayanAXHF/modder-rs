@@ -2,6 +2,14 @@
 name = "modder"
 version = "1.0.0"
 edition = "2024"
+description = "Modder-rs is a mod manager for Minecraft. This crate contains the cli and the core logic that is also used by the TUI wrapper."
+license = "MIT"
+authors = ["JayanAXHF"]
+homepage = "https://github.com/JayanAXHF/modder-rs"
+repository = "https://github.com/JayanAXHF/modder-rs"
+readme = "README.md"
+keywords = ["minecraft", "mod", "manager", "cli"]
+categories = ["command-line-utilities", "games"]
 
 [dependencies]
 better-panic = "0.3.0"
