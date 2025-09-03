@@ -3,7 +3,7 @@ use crate::{action::Action, app::Mode, config::Config};
 use color_eyre::Result;
 use crossterm::event::KeyCode;
 use modder::{
-    Link, calc_sha512,
+    calc_sha512,
     cli::Source,
     curseforge_wrapper::{API_KEY, CurseForgeAPI},
     metadata::Metadata,
