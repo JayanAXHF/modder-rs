@@ -10,7 +10,7 @@ Modder is a tool for managing mods for Minecraft. It can add mods from Modrinth,
 
 - [x] Bulk-update a directory of mods
 - [x] Add mods via Modrinth
-- [ ] Add mods via CurseForge (implementation on hold)
+- [x] Add mods via CurseForge 
 - [x] Add mods via Github Releases
 - [x] Toggle mods in a directory (enables/disables them by renaming the file extension)
 - [x] List mods with details like version, source, and category
