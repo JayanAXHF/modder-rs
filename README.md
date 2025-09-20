@@ -6,6 +6,10 @@ A simple, fast tool for managing Minecraft mods from the command line.
 
 Modder is a tool for managing mods for Minecraft. It can add mods from Modrinth, CurseForge, and Github Releases. Other features include bulk-updating a directory of mods to a specified version, listing detailed information about the mods in a directory, and toggling mods on or off without deleting the files.
 
+```bash
+cargo install --locked modder_tui
+```
+
 ## Features
 
 - [x] Bulk-update a directory of mods
